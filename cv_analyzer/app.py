@@ -7,6 +7,7 @@ from cv_parser import CVParser
 from scoring import ScoringSystem
 from excel_manager import ExcelManager
 from jobs_manager import JobsManager
+from blob_storage import BlobStorageClient
 import pandas as pd
 from datetime import datetime
 
@@ -15,10 +16,16 @@ CORS(app)
 
 # Configuration
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
-DATA_FOLDER = os.path.join(BASE_DIR, 'data')
+IS_VERCEL = bool(os.getenv('VERCEL'))
+RUNTIME_BASE_DIR = os.path.join('/tmp', 'cv_analyzer') if IS_VERCEL else BASE_DIR
+UPLOAD_FOLDER = os.path.join(RUNTIME_BASE_DIR, 'uploads')
+DATA_FOLDER = os.path.join(RUNTIME_BASE_DIR, 'data')
 ALLOWED_EXTENSIONS = {'pdf', 'docx'}
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+APPLICANTS_FILE = os.path.join(DATA_FOLDER, 'applicants.xlsx')
+JOBS_FILE = os.path.join(DATA_FOLDER, 'jobs.xlsx')
+APPLICANTS_BLOB_PATH = 'cv-analyzer/applicants.xlsx'
+JOBS_BLOB_PATH = 'cv-analyzer/jobs.xlsx'
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE
@@ -28,10 +35,51 @@ cv_parser = CVParser()
 scoring_system = ScoringSystem()
 excel_manager = ExcelManager(os.path.join(DATA_FOLDER, 'applicants.xlsx'))
 jobs_manager = JobsManager(os.path.join(DATA_FOLDER, 'jobs.xlsx'))
+blob_client = BlobStorageClient()
 
 # Ensure folders exist
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(DATA_FOLDER, exist_ok=True)
+
+
+def sync_from_blob(target: str = 'all'):
+    """Pull latest Excel files from Vercel Blob into runtime storage."""
+    if not (IS_VERCEL and blob_client.enabled):
+        return
+
+    if target in ['all', 'applicants']:
+        downloaded = blob_client.download_file(APPLICANTS_BLOB_PATH, APPLICANTS_FILE)
+        if downloaded:
+            print('Synced applicants.xlsx from Vercel Blob')
+
+    if target in ['all', 'jobs']:
+        downloaded = blob_client.download_file(JOBS_BLOB_PATH, JOBS_FILE)
+        if downloaded:
+            print('Synced jobs.xlsx from Vercel Blob')
+
+
+def sync_to_blob(target: str):
+    """Push runtime Excel files to Vercel Blob after writes."""
+    if not (IS_VERCEL and blob_client.enabled):
+        return
+
+    if target == 'applicants':
+        uploaded = blob_client.upload_file(
+            APPLICANTS_BLOB_PATH,
+            APPLICANTS_FILE,
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        if uploaded:
+            print('Uploaded applicants.xlsx to Vercel Blob')
+
+    if target == 'jobs':
+        uploaded = blob_client.upload_file(
+            JOBS_BLOB_PATH,
+            JOBS_FILE,
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        if uploaded:
+            print('Uploaded jobs.xlsx to Vercel Blob')
 
 def allowed_file(filename: str) -> bool:
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -107,6 +155,7 @@ def index():
 @app.route('/api/jobs', methods=['GET'])
 def get_jobs():
     try:
+        sync_from_blob('jobs')
         jobs = jobs_manager.get_all_jobs()
         return jsonify({'success': True, 'jobs': jobs, 'total': len(jobs)}), 200
     except Exception as e:
@@ -117,6 +166,7 @@ def get_jobs():
 @app.route('/api/jobs', methods=['POST'])
 def create_job():
     try:
+        sync_from_blob('jobs')
         payload = request.get_json(silent=True) or {}
 
         required_fields = [
@@ -133,6 +183,7 @@ def create_job():
 
         result = jobs_manager.add_job(payload)
         if result.get('success'):
+            sync_to_blob('jobs')
             return jsonify({
                 'success': True,
                 'message': 'Job posted successfully',
@@ -148,6 +199,7 @@ def create_job():
 @app.route('/api/jobs/<job_id>', methods=['GET'])
 def get_job(job_id):
     try:
+        sync_from_blob('jobs')
         job = jobs_manager.get_job_by_id(job_id)
         if job:
             return jsonify({'success': True, 'job': job}), 200
@@ -160,12 +212,14 @@ def get_job(job_id):
 def upload_cv():
     """Handle CV upload and parsing"""
     try:
+        sync_from_blob('applicants')
         if 'file' not in request.files:
             return jsonify({'error': 'No file provided'}), 400
         
         result = process_uploaded_file(request.files['file'])
 
         if result.get('success'):
+            sync_to_blob('applicants')
             return jsonify({
                 'success': True,
                 'message': 'CV uploaded and processed successfully',
@@ -186,6 +240,7 @@ def upload_cv():
 def upload_cvs():
     """Handle batch CV uploads and return per-file outcomes."""
     try:
+        sync_from_blob('applicants')
         files = request.files.getlist('files')
         if not files:
             return jsonify({'error': 'No files provided'}), 400
@@ -207,6 +262,9 @@ def upload_cvs():
                 failed_count += 1
                 results.append({'status': 'failed', 'error': result.get('error', '')})
 
+        if success_count > 0:
+            sync_to_blob('applicants')
+
         return jsonify({
             'success': True,
             'summary': {
@@ -225,6 +283,7 @@ def upload_cvs():
 def get_dashboard():
     """Get dashboard statistics"""
     try:
+        sync_from_blob('applicants')
         stats = excel_manager.get_statistics()
         top_candidates = excel_manager.get_top_candidates(10)
         
@@ -241,6 +300,7 @@ def get_dashboard():
 def get_candidates():
     """Get all candidates with optional filtering"""
     try:
+        sync_from_blob('applicants')
         # Get query parameters
         filters = {}
         
@@ -278,6 +338,7 @@ def get_candidates():
 def get_candidate_detail(email):
     """Get detailed information about a specific candidate"""
     try:
+        sync_from_blob('applicants')
         candidate = excel_manager.get_candidate_by_email(email)
         
         if candidate:
@@ -295,9 +356,11 @@ def get_candidate_detail(email):
 def delete_candidate(email):
     """Delete a candidate"""
     try:
+        sync_from_blob('applicants')
         success = excel_manager.delete_candidate(email)
         
         if success:
+            sync_to_blob('applicants')
             return jsonify({
                 'success': True,
                 'message': 'Candidate deleted successfully'
@@ -312,6 +375,7 @@ def delete_candidate(email):
 def export_data():
     """Export filtered candidates to Excel"""
     try:
+        sync_from_blob('applicants')
         data = request.json.get('data', [])
         
         if not data:
@@ -365,7 +429,8 @@ def export_and_download():
 def download_excel():
     """Download the main applicants Excel file"""
     try:
-        excel_path = os.path.join(DATA_FOLDER, 'applicants.xlsx')
+        sync_from_blob('applicants')
+        excel_path = APPLICANTS_FILE
         
         if os.path.exists(excel_path):
             return send_file(excel_path, as_attachment=True, 
@@ -379,6 +444,11 @@ def download_excel():
 @app.errorhandler(413)
 def request_entity_too_large(error):
     return jsonify({'error': 'File too large. Maximum size is 10MB'}), 413
+
+
+if IS_VERCEL and blob_client.enabled:
+    print(blob_client.get_status_message())
+    sync_from_blob('all')
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)

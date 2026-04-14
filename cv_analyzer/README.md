@@ -94,3 +94,37 @@ Weighted components:
 - If a CV has no email, it is rejected to preserve unique candidate tracking.
 - Batch upload endpoint: `/api/upload-cvs`.
 - Direct filtered export download endpoint: `/api/export-download`.
+
+## Deploy To Vercel
+
+This project is now configured for Vercel with:
+
+- Root `vercel.json` routing all requests to `cv_analyzer/app.py`
+- Root `requirements.txt` forwarding to `cv_analyzer/requirements.txt`
+
+Steps:
+
+1. Push your repo to GitHub.
+2. In Vercel, create a new project from that repository.
+3. Keep the project Root Directory as repository root.
+4. Deploy.
+
+Important runtime note:
+
+- On Vercel, file writes use `/tmp` (ephemeral serverless storage).
+- This means Excel and uploads are not permanently persisted across cold starts/redeploys.
+
+Persistent Excel storage with Vercel Blob is now wired in this project.
+
+Required environment variable in Vercel:
+
+- `BLOB_READ_WRITE_TOKEN`: your Vercel Blob read/write token.
+
+Behavior:
+
+- On each request, the API pulls the latest `applicants.xlsx` / `jobs.xlsx` from Blob into runtime storage.
+- After write operations (new candidates, deletes, new jobs), updated Excel files are pushed back to Blob.
+
+Optional variable:
+
+- `VERCEL_BLOB_BASE_URL` (defaults to `https://blob.vercel-storage.com`).
