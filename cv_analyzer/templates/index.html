@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CV Analyzer - Graduate Trainee Recruitment</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Sidebar Navigation -->
+        <nav class="sidebar">
+            <div class="logo">
+                <h1>CV Analyzer</h1>
+            </div>
+            <ul class="nav-menu">
+                <li><a href="#dashboard" class="nav-link active" data-tab="dashboard">📊 Dashboard</a></li>
+                <li><a href="#upload" class="nav-link" data-tab="upload">📄 Upload CV</a></li>
+                <li><a href="#candidates" class="nav-link" data-tab="candidates">👥 Candidates</a></li>
+                <li><a href="#jobs" class="nav-link" data-tab="jobs">💼 Jobs</a></li>
+                <li><a href="#filters" class="nav-link" data-tab="filters">🔍 Search & Filter</a></li>
+            </ul>
+            <div class="sidebar-footer">
+                <button class="btn-download" onclick="downloadExcel()">📥 Download Excel</button>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Top Bar -->
+            <header class="top-bar">
+                <h2 id="page-title">Dashboard</h2>
+                <div class="stats-summary">
+                    <div class="stat-card">
+                        <span class="stat-label">Total Applicants</span>
+                        <span class="stat-value" id="total-applicants">0</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Average Score</span>
+                        <span class="stat-value" id="avg-score">0%</span>
+                    </div>
+                    <div class="stat-card accent">
+                        <span class="stat-label">Top Candidate Score</span>
+                        <span class="stat-value" id="top-score">0%</span>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Dashboard Tab -->
+            <section id="dashboard" class="tab-content active">
+                <div class="dashboard-grid">
+                    <!-- Top Candidates -->
+                    <div class="card">
+                        <h3>🏆 Top 10 Candidates</h3>
+                        <div id="top-candidates" class="candidates-list"></div>
+                    </div>
+
+                    <!-- Score Distribution -->
+                    <div class="card">
+                        <h3>📈 Score Distribution</h3>
+                        <canvas id="scoreChart"></canvas>
+                    </div>
+
+                    <!-- Gender Distribution -->
+                    <div class="card">
+                        <h3>👤 Gender Distribution</h3>
+                        <canvas id="genderChart"></canvas>
+                    </div>
+
+                    <!-- Location Distribution -->
+                    <div class="card">
+                        <h3>🌍 Top Locations</h3>
+                        <canvas id="locationChart"></canvas>
+                    </div>
+
+                    <!-- Skills Frequency -->
+                    <div class="card">
+                        <h3>💡 Top Skills</h3>
+                        <canvas id="skillsChart"></canvas>
+                    </div>
+
+                    <!-- Education Breakdown -->
+                    <div class="card">
+                        <h3>🎓 Education Breakdown</h3>
+                        <canvas id="educationChart"></canvas>
+                    </div>
+
+                    <!-- Experience Distribution -->
+                    <div class="card">
+                        <h3>📅 Experience Distribution</h3>
+                        <canvas id="experienceChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Upload CV Tab -->
+            <section id="upload" class="tab-content">
+                <div class="card upload-card">
+                    <h3>📤 Upload CV</h3>
+                    <p class="subtitle">Supported formats: PDF, DOCX (Max 10MB each). Upload one or many CV files at once.</p>
+                    
+                    <div class="upload-area" id="dropZone">
+                        <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        <p>Drag and drop CV files here or click to select multiple files</p>
+                        <input type="file" id="fileInput" accept=".pdf,.docx" multiple hidden>
+                    </div>
+
+                    <div id="uploadStatus" class="upload-status" style="display: none;"></div>
+                </div>
+
+                <div id="uploadedCandidates" class="card" style="display: none;">
+                    <h3>✅ Recently Uploaded</h3>
+                    <div id="uploadedList"></div>
+                </div>
+
+                <div id="uploadResultsCard" class="card" style="display: none;">
+                    <h3>📋 Upload Results</h3>
+                    <div id="uploadResultsTable" class="table-container"></div>
+                </div>
+            </section>
+
+            <!-- Candidates Tab -->
+            <section id="candidates" class="tab-content">
+                <div class="card">
+                    <h3>👥 All Candidates</h3>
+                    <div id="candidatesTable" class="table-container"></div>
+                </div>
+            </section>
+
+            <!-- Jobs Tab -->
+            <section id="jobs" class="tab-content">
+                <div class="jobs-layout">
+                    <div class="card job-form-card">
+                        <h3>💼 Post a Job</h3>
+                        <p class="subtitle">Post Date is set automatically when the job is saved.</p>
+
+                        <form id="jobForm" class="job-form">
+                            <div class="job-form-grid">
+                                <div class="filter-group">
+                                    <label for="jobTitle">Job Title</label>
+                                    <input type="text" id="jobTitle" required>
+                                </div>
+
+                                <div class="filter-group">
+                                    <label for="jobDepartment">Department / Category</label>
+                                    <input type="text" id="jobDepartment" required>
+                                </div>
+
+                                <div class="filter-group">
+                                    <label for="jobType">Job Type</label>
+                                    <select id="jobType" required>
+                                        <option value="">Select Job Type</option>
+                                        <option>Full-time</option>
+                                        <option>Part-time</option>
+                                        <option>Contract</option>
+                                        <option>Internship</option>
+                                    </select>
+                                </div>
+
+                                <div class="filter-group">
+                                    <label for="workMode">Work Mode</label>
+                                    <select id="workMode" required>
+                                        <option value="">Select Work Mode</option>
+                                        <option>On-site</option>
+                                        <option>Remote</option>
+                                        <option>Hybrid</option>
+                                    </select>
+                                </div>
+
+                                <div class="filter-group">
+                                    <label for="jobLocation">Location</label>
+                                    <input type="text" id="jobLocation" required>
+                                </div>
+
+                                <div class="filter-group">
+                                    <label for="experienceLevel">Experience Level</label>
+                                    <select id="experienceLevel" required>
+                                        <option value="">Select Experience Level</option>
+                                        <option>Entry</option>
+                                        <option>Mid</option>
+                                        <option>Senior</option>
+                                    </select>
+                                </div>
+
+                                <div class="filter-group">
+                                    <label for="applicationDeadline">Application Deadline</label>
+                                    <input type="date" id="applicationDeadline" required>
+                                </div>
+                            </div>
+
+                            <div class="filter-group full-width">
+                                <label for="jobDescription">Job Description</label>
+                                <textarea id="jobDescription" rows="4" required></textarea>
+                            </div>
+
+                            <div class="filter-group full-width">
+                                <label for="jobResponsibilities">Key Responsibilities</label>
+                                <textarea id="jobResponsibilities" rows="4" required></textarea>
+                            </div>
+
+                            <div class="filter-group full-width">
+                                <label for="jobRequirements">Requirements / Qualifications</label>
+                                <textarea id="jobRequirements" rows="4" required></textarea>
+                            </div>
+
+                            <div class="filter-actions">
+                                <button type="submit" class="btn-primary">Publish Job</button>
+                                <button type="button" class="btn-secondary" onclick="resetJobForm()">Reset</button>
+                            </div>
+                        </form>
+
+                        <div id="jobFormStatus" class="upload-status" style="display: none;"></div>
+                    </div>
+
+                    <div class="card job-board-card">
+                        <h3>🧾 Client Job Board</h3>
+                        <div id="jobsBoard" class="jobs-board"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Filters Tab -->
+            <section id="filters" class="tab-content">
+                <div class="card filters-card">
+                    <h3>🔍 Search & Filter</h3>
+                    
+                    <div class="filter-grid">
+                        <div class="filter-group">
+                            <label for="searchInput">Search by Name/Email</label>
+                            <input type="text" id="searchInput" placeholder="Enter name or email">
+                        </div>
+
+                        <div class="filter-group">
+                            <label for="scoreRangeMin">Min Score (%)</label>
+                            <input type="number" id="scoreRangeMin" min="0" max="100" step="5">
+                        </div>
+
+                        <div class="filter-group">
+                            <label for="scoreRangeMax">Max Score (%)</label>
+                            <input type="number" id="scoreRangeMax" min="0" max="100" step="5">
+                        </div>
+
+                        <div class="filter-group">
+                            <label for="genderFilter">Gender</label>
+                            <select id="genderFilter">
+                                <option value="">All Genders</option>
+                                <option value="Male">Male</option>
+                                <option value="Female">Female</option>
+                                <option value="Not specified">Not specified</option>
+                            </select>
+                        </div>
+
+                        <div class="filter-group">
+                            <label for="countryFilter">Country</label>
+                            <input type="text" id="countryFilter" placeholder="Enter country">
+                        </div>
+
+                        <div class="filter-group">
+                            <label for="cityFilter">City</label>
+                            <input type="text" id="cityFilter" placeholder="Enter city">
+                        </div>
+
+                        <div class="filter-group">
+                            <label for="educationFilter">Education</label>
+                            <select id="educationFilter">
+                                <option value="">All Education Levels</option>
+                                <option value="Degree">Degree</option>
+                                <option value="Masters">Masters</option>
+                                <option value="PhD">PhD</option>
+                                <option value="Diploma">Diploma</option>
+                                <option value="Unknown">Unknown</option>
+                            </select>
+                        </div>
+
+                        <div class="filter-group">
+                            <label for="skillFilter">Skill</label>
+                            <input type="text" id="skillFilter" placeholder="Enter skill">
+                        </div>
+
+                        <div class="filter-group">
+                            <label for="minExperience">Min Experience (years)</label>
+                            <input type="number" id="minExperience" min="0" max="50" step="1">
+                        </div>
+                    </div>
+
+                    <div class="filter-actions">
+                        <button class="btn-primary" onclick="applyFilters()">Apply Filters</button>
+                        <button class="btn-secondary" onclick="resetFilters()">Reset</button>
+                        <button class="btn-secondary" onclick="exportFiltered()">📥 Download Filtered Excel</button>
+                    </div>
+                </div>
+
+                <div class="card" id="filteredResults" style="display: none;">
+                    <h3>Filter Results</h3>
+                    <div id="filteredTable" class="table-container"></div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Candidate Detail Modal -->
+    <div id="candidateModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeCandidateModal()">&times;</span>
+            <div id="candidateDetail"></div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
