@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: cv-analyzer
+    runtime: python
+    plan: starter
+    autoDeploy: true
+    buildCommand: pip install --upgrade pip setuptools wheel; pip install -r requirements.txt
+    startCommand: gunicorn --chdir cv_analyzer app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
+    disks:
+      - name: cv-analyzer-data
+        mountPath: /opt/render/project/src/cv_analyzer/data
+        sizeGB: 1
