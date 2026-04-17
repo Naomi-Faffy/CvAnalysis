@@ -95,36 +95,34 @@ Weighted components:
 - Batch upload endpoint: `/api/upload-cvs`.
 - Direct filtered export download endpoint: `/api/export-download`.
 
-## Deploy To Vercel
+## Deploy To Render
 
-This project is now configured for Vercel with:
+Recommended service type:
 
-- Root `vercel.json` routing all requests to `cv_analyzer/app.py`
-- Root `requirements.txt` forwarding to `cv_analyzer/requirements.txt`
+- Web Service (Python)
 
-Steps:
+Repository requirements already in place:
 
-1. Push your repo to GitHub.
-2. In Vercel, create a new project from that repository.
-3. Keep the project Root Directory as repository root.
-4. Deploy.
+- Root `requirements.txt` points to `cv_analyzer/requirements.txt`
+- Root `runtime.txt` pins Python 3.11.11
 
-Important runtime note:
+Render settings:
 
-- On Vercel, file writes use `/tmp` (ephemeral serverless storage).
-- This means Excel and uploads are not permanently persisted across cold starts/redeploys.
+- Build Command:
+  - `pip install --upgrade pip setuptools wheel; pip install -r requirements.txt`
+- Start Command:
+  - `gunicorn --chdir cv_analyzer app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120`
 
-Persistent Excel storage with Vercel Blob is now wired in this project.
+Environment variables:
 
-Required environment variable in Vercel:
+- `PYTHON_VERSION=3.11.11`
 
-- `BLOB_READ_WRITE_TOKEN`: your Vercel Blob read/write token.
+Instance size guidance:
 
-Behavior:
+- Minimum for testing: 1 vCPU / 1 GB RAM
+- Recommended baseline: 2 vCPU / 2 GB RAM
 
-- On each request, the API pulls the latest `applicants.xlsx` / `jobs.xlsx` from Blob into runtime storage.
-- After write operations (new candidates, deletes, new jobs), updated Excel files are pushed back to Blob.
+Important storage note:
 
-Optional variable:
-
-- `VERCEL_BLOB_BASE_URL` (defaults to `https://blob.vercel-storage.com`).
+- This app stores applicant/job data in local Excel files under `cv_analyzer/data`.
+- Use a persistent disk on Render and mount it to the app path so files survive restarts and redeploys.
