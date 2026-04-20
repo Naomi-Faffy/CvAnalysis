@@ -1,5 +1,6 @@
 Flask==2.3.3
 Flask-CORS==4.0.0
+gunicorn==22.0.0
 setuptools>=70.0.0
 wheel>=0.43.0
 pandas==2.0.3
