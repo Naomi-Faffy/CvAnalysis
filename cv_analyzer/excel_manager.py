@@ -15,6 +15,29 @@ class ExcelManager:
         ]
         self.ensure_file_exists()
 
+    def _empty_dataframe(self) -> pd.DataFrame:
+        return pd.DataFrame(columns=self.get_columns())
+
+    def _load_dataframe(self) -> pd.DataFrame:
+        """Load applicants workbook safely and normalize required columns."""
+        try:
+            if not os.path.exists(self.excel_path):
+                return self._empty_dataframe()
+
+            df = pd.read_excel(self.excel_path)
+            required = self.get_columns()
+            for col in required:
+                if col not in df.columns:
+                    df[col] = 0 if col in self.skill_columns else ""
+            return df[required]
+        except Exception as e:
+            print(f"Error loading applicants workbook; using empty dataframe: {e}")
+            return self._empty_dataframe()
+
+    def _save_dataframe(self, df: pd.DataFrame):
+        os.makedirs(os.path.dirname(self.excel_path), exist_ok=True)
+        df[self.get_columns()].to_excel(self.excel_path, index=False, sheet_name='Applicants')
+
     def get_columns(self) -> List[str]:
         return [
             'Applicant ID',
@@ -57,7 +80,7 @@ class ExcelManager:
             df.to_excel(self.excel_path, index=False, sheet_name='Applicants')
             return
 
-        df = pd.read_excel(self.excel_path)
+        df = self._load_dataframe()
         required = self.get_columns()
         changed = False
         for col in required:
@@ -72,7 +95,7 @@ class ExcelManager:
         try:
             if not email:
                 return False
-            df = pd.read_excel(self.excel_path)
+            df = self._load_dataframe()
             if 'Email' not in df.columns:
                 return False
             normalized_emails = df['Email'].fillna('').astype(str).str.lower().str.strip().values
@@ -139,7 +162,7 @@ class ExcelManager:
         job_assignment: Dict = None
     ) -> bool:
         try:
-            df = pd.read_excel(self.excel_path)
+            df = self._load_dataframe()
             email = str(candidate_data.get('email', '')).strip().lower()
 
             if email and self.candidate_exists(email):
@@ -147,8 +170,7 @@ class ExcelManager:
 
             new_row = self._new_candidate_row(candidate_data, scores, file_name, job_assignment)
             df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-            df = df[self.get_columns()]
-            df.to_excel(self.excel_path, index=False, sheet_name='Applicants')
+            self._save_dataframe(df)
             return True
         except Exception as e:
             print(f"Error adding candidate: {e}")
@@ -156,14 +178,16 @@ class ExcelManager:
 
     def get_all_candidates(self) -> List[Dict]:
         try:
-            df = pd.read_excel(self.excel_path)
+            df = self._load_dataframe()
+            if 'Final Score (%)' in df.columns:
+                df['Final Score (%)'] = pd.to_numeric(df['Final Score (%)'], errors='coerce').fillna(0)
             return df.sort_values('Final Score (%)', ascending=False).to_dict('records')
         except Exception:
             return []
 
     def get_top_candidates(self, limit: int = 10) -> List[Dict]:
         try:
-            df = pd.read_excel(self.excel_path)
+            df = self._load_dataframe()
             if df.empty:
                 return []
             if 'Final Score (%)' in df.columns:
@@ -194,7 +218,7 @@ class ExcelManager:
 
     def get_statistics(self) -> Dict:
         try:
-            df = pd.read_excel(self.excel_path)
+            df = self._load_dataframe()
             if df.empty:
                 return {
                     'total_applicants': 0,
@@ -231,7 +255,7 @@ class ExcelManager:
 
     def filter_candidates(self, filters: Dict) -> List[Dict]:
         try:
-            df = pd.read_excel(self.excel_path)
+            df = self._load_dataframe()
 
             if 'min_score' in filters:
                 df = df[pd.to_numeric(df['Final Score (%)'], errors='coerce').fillna(0) >= float(filters['min_score'])]
@@ -287,9 +311,9 @@ class ExcelManager:
     def delete_candidate(self, email: str) -> bool:
         try:
             normalized_email = str(email).strip().lower()
-            df = pd.read_excel(self.excel_path)
+            df = self._load_dataframe()
             df = df[df['Email'].fillna('').str.lower() != normalized_email]
-            df.to_excel(self.excel_path, index=False, sheet_name='Applicants')
+            self._save_dataframe(df)
             return True
         except Exception as e:
             print(f"Error deleting candidate: {e}")
@@ -298,7 +322,7 @@ class ExcelManager:
     def get_candidate_by_email(self, email: str) -> Dict:
         try:
             normalized_email = str(email).strip().lower()
-            df = pd.read_excel(self.excel_path)
+            df = self._load_dataframe()
             result = df[df['Email'].fillna('').str.lower() == normalized_email]
             if not result.empty:
                 return result.iloc[0].to_dict()
@@ -311,7 +335,7 @@ class ExcelManager:
             if not job or not job.get('Job ID'):
                 return 0
 
-            df = pd.read_excel(self.excel_path)
+            df = self._load_dataframe()
             if df.empty:
                 return 0
 
@@ -339,8 +363,7 @@ class ExcelManager:
                     df.at[idx, 'Matched On'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
                     matched += 1
 
-            df = df[self.get_columns()]
-            df.to_excel(self.excel_path, index=False, sheet_name='Applicants')
+            self._save_dataframe(df)
             return matched
         except Exception as e:
             print(f"Error assigning candidates to job: {e}")

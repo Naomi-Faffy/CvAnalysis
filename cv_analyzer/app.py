@@ -481,6 +481,31 @@ def download_excel():
         print(f"Error in download_excel: {e}")
         return jsonify({'error': str(e)}), 500
 
+
+@app.route('/api/debug/storage', methods=['GET'])
+def debug_storage():
+    """Lightweight diagnostics for deployed storage state."""
+    try:
+        stats = excel_manager.get_statistics()
+        jobs = jobs_manager.get_all_jobs()
+        return jsonify({
+            'success': True,
+            'paths': {
+                'applicants_file': APPLICANTS_FILE,
+                'jobs_file': JOBS_FILE,
+            },
+            'exists': {
+                'applicants': os.path.exists(APPLICANTS_FILE),
+                'jobs': os.path.exists(JOBS_FILE),
+            },
+            'counts': {
+                'candidates': int(stats.get('total_applicants', 0) or 0),
+                'jobs': len(jobs)
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.errorhandler(413)
 def request_entity_too_large(error):
     return jsonify({'error': 'File too large. Maximum size is 10MB'}), 413
