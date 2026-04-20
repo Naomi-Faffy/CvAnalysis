@@ -506,6 +506,20 @@ def debug_storage():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
+@app.route('/api/debug/candidates', methods=['GET'])
+def debug_candidates():
+    """Return a small candidate payload to validate JSON serialization end-to-end."""
+    try:
+        candidates = excel_manager.get_all_candidates()
+        return jsonify({
+            'success': True,
+            'count': len(candidates),
+            'sample': candidates[:3]
+        }), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.errorhandler(413)
 def request_entity_too_large(error):
     return jsonify({'error': 'File too large. Maximum size is 10MB'}), 413

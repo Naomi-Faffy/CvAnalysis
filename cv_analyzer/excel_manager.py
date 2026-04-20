@@ -38,6 +38,22 @@ class ExcelManager:
         os.makedirs(os.path.dirname(self.excel_path), exist_ok=True)
         df[self.get_columns()].to_excel(self.excel_path, index=False, sheet_name='Applicants')
 
+    def _json_safe_records(self, df: pd.DataFrame) -> List[Dict]:
+        """Convert dataframe rows to plain JSON-serializable dictionaries."""
+        if df.empty:
+            return []
+
+        safe_df = df.copy()
+        safe_df = safe_df.where(pd.notnull(safe_df), None)
+
+        datetime_cols = ['Upload Date', 'Matched On']
+        for col in datetime_cols:
+            if col in safe_df.columns:
+                safe_df[col] = pd.to_datetime(safe_df[col], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S')
+                safe_df[col] = safe_df[col].where(pd.notnull(safe_df[col]), '')
+
+        return safe_df.to_dict('records')
+
     def get_columns(self) -> List[str]:
         return [
             'Applicant ID',
@@ -181,7 +197,8 @@ class ExcelManager:
             df = self._load_dataframe()
             if 'Final Score (%)' in df.columns:
                 df['Final Score (%)'] = pd.to_numeric(df['Final Score (%)'], errors='coerce').fillna(0)
-            return df.sort_values('Final Score (%)', ascending=False).to_dict('records')
+            df = df.sort_values('Final Score (%)', ascending=False)
+            return self._json_safe_records(df)
         except Exception:
             return []
 
@@ -192,7 +209,8 @@ class ExcelManager:
                 return []
             if 'Final Score (%)' in df.columns:
                 df['Final Score (%)'] = pd.to_numeric(df['Final Score (%)'], errors='coerce').fillna(0)
-            return df.sort_values('Final Score (%)', ascending=False).head(limit).to_dict('records')
+            df = df.sort_values('Final Score (%)', ascending=False).head(limit)
+            return self._json_safe_records(df)
         except Exception:
             return []
 
@@ -290,7 +308,8 @@ class ExcelManager:
                 ]
 
             df['Final Score (%)'] = pd.to_numeric(df['Final Score (%)'], errors='coerce').fillna(0)
-            return df.sort_values('Final Score (%)', ascending=False).to_dict('records')
+            df = df.sort_values('Final Score (%)', ascending=False)
+            return self._json_safe_records(df)
         except Exception as e:
             print(f"Error filtering candidates: {e}")
             return []
@@ -325,7 +344,8 @@ class ExcelManager:
             df = self._load_dataframe()
             result = df[df['Email'].fillna('').str.lower() == normalized_email]
             if not result.empty:
-                return result.iloc[0].to_dict()
+                row = self._json_safe_records(result.head(1))
+                return row[0] if row else {}
             return {}
         except Exception:
             return {}
