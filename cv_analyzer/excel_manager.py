@@ -41,6 +41,11 @@ class ExcelManager:
             'Total Candidate Score',
             'Max Score',
             'Final Score (%)',
+            'Applied Job ID',
+            'Applied Job Title',
+            'Match Score (%)',
+            'Match Source',
+            'Matched On',
             'Upload Date',
             'CV File Name'
         ]
@@ -75,11 +80,18 @@ class ExcelManager:
         except Exception:
             return False
 
-    def _new_candidate_row(self, candidate_data: Dict, scores: Dict, file_name: str = "") -> Dict:
+    def _new_candidate_row(
+        self,
+        candidate_data: Dict,
+        scores: Dict,
+        file_name: str = "",
+        job_assignment: Dict = None
+    ) -> Dict:
         skills = candidate_data.get('skills', []) or []
         skills_set = {skill.strip().lower() for skill in skills}
         education_items = candidate_data.get('education', []) or []
         education_str = "; ".join(item.get('qualification', '').strip() for item in education_items if item.get('qualification'))
+        job_assignment = job_assignment or {}
 
         row = {
             'Applicant ID': f"APP-{str(uuid.uuid4())[:8].upper()}",
@@ -105,6 +117,11 @@ class ExcelManager:
             'Total Candidate Score': scores.get('total_candidate_score', 0),
             'Max Score': scores.get('max_score', 0),
             'Final Score (%)': scores.get('final_score', 0),
+            'Applied Job ID': job_assignment.get('job_id', ''),
+            'Applied Job Title': job_assignment.get('job_title', ''),
+            'Match Score (%)': job_assignment.get('match_score', 0),
+            'Match Source': job_assignment.get('match_source', ''),
+            'Matched On': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S') if job_assignment.get('job_id') else '',
             'Upload Date': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
             'CV File Name': file_name,
         }
@@ -114,7 +131,13 @@ class ExcelManager:
 
         return row
 
-    def add_candidate(self, candidate_data: Dict, scores: Dict, file_name: str = "") -> bool:
+    def add_candidate(
+        self,
+        candidate_data: Dict,
+        scores: Dict,
+        file_name: str = "",
+        job_assignment: Dict = None
+    ) -> bool:
         try:
             df = pd.read_excel(self.excel_path)
             email = str(candidate_data.get('email', '')).strip().lower()
@@ -122,7 +145,7 @@ class ExcelManager:
             if email and self.candidate_exists(email):
                 return False
 
-            new_row = self._new_candidate_row(candidate_data, scores, file_name)
+            new_row = self._new_candidate_row(candidate_data, scores, file_name, job_assignment)
             df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
             df = df[self.get_columns()]
             df.to_excel(self.excel_path, index=False, sheet_name='Applicants')
@@ -143,6 +166,8 @@ class ExcelManager:
             df = pd.read_excel(self.excel_path)
             if df.empty:
                 return []
+            if 'Final Score (%)' in df.columns:
+                df['Final Score (%)'] = pd.to_numeric(df['Final Score (%)'], errors='coerce').fillna(0)
             return df.sort_values('Final Score (%)', ascending=False).head(limit).to_dict('records')
         except Exception:
             return []
@@ -150,12 +175,13 @@ class ExcelManager:
     def _score_distribution(self, df: pd.DataFrame) -> Dict:
         if 'Final Score (%)' not in df.columns:
             return {}
+        scores = pd.to_numeric(df['Final Score (%)'], errors='coerce').fillna(0)
         return {
-            '90-100%': int((df['Final Score (%)'] >= 90).sum()),
-            '80-89%': int(((df['Final Score (%)'] >= 80) & (df['Final Score (%)'] < 90)).sum()),
-            '70-79%': int(((df['Final Score (%)'] >= 70) & (df['Final Score (%)'] < 80)).sum()),
-            '60-69%': int(((df['Final Score (%)'] >= 60) & (df['Final Score (%)'] < 70)).sum()),
-            'Below 60%': int((df['Final Score (%)'] < 60).sum())
+            '90-100%': int((scores >= 90).sum()),
+            '80-89%': int(((scores >= 80) & (scores < 90)).sum()),
+            '70-79%': int(((scores >= 70) & (scores < 80)).sum()),
+            '60-69%': int(((scores >= 60) & (scores < 70)).sum()),
+            'Below 60%': int((scores < 60).sum())
         }
 
     def _skills_frequency(self, df: pd.DataFrame) -> Dict:
@@ -182,6 +208,11 @@ class ExcelManager:
                     'skills_frequency': {}
                 }
 
+            if 'Final Score (%)' in df.columns:
+                df['Final Score (%)'] = pd.to_numeric(df['Final Score (%)'], errors='coerce').fillna(0)
+            if 'Years of Experience' in df.columns:
+                df['Years of Experience'] = pd.to_numeric(df['Years of Experience'], errors='coerce').fillna(0)
+
             stats = {
                 'total_applicants': len(df),
                 'average_score': round(df['Final Score (%)'].mean(), 2) if 'Final Score (%)' in df.columns else 0,
@@ -203,9 +234,9 @@ class ExcelManager:
             df = pd.read_excel(self.excel_path)
 
             if 'min_score' in filters:
-                df = df[df['Final Score (%)'] >= filters['min_score']]
+                df = df[pd.to_numeric(df['Final Score (%)'], errors='coerce').fillna(0) >= float(filters['min_score'])]
             if 'max_score' in filters:
-                df = df[df['Final Score (%)'] <= filters['max_score']]
+                df = df[pd.to_numeric(df['Final Score (%)'], errors='coerce').fillna(0) <= float(filters['max_score'])]
             if 'gender' in filters:
                 df = df[df['Gender'].fillna('').str.lower() == str(filters['gender']).lower()]
             if 'country' in filters:
@@ -215,7 +246,9 @@ class ExcelManager:
             if 'education_level' in filters:
                 df = df[df['Education Level'].fillna('').str.contains(str(filters['education_level']), case=False, na=False)]
             if 'min_experience' in filters:
-                df = df[df['Years of Experience'].fillna(0).astype(float) >= float(filters['min_experience'])]
+                df = df[pd.to_numeric(df['Years of Experience'], errors='coerce').fillna(0) >= float(filters['min_experience'])]
+            if 'applied_job_id' in filters:
+                df = df[df['Applied Job ID'].fillna('').astype(str) == str(filters['applied_job_id'])]
             if 'skill' in filters:
                 skill_value = str(filters['skill']).strip().lower()
                 matching_skill_cols = [col for col in self.skill_columns if col.lower() == skill_value]
@@ -232,6 +265,7 @@ class ExcelManager:
                     | df['Email'].fillna('').str.contains(query, case=False, na=False)
                 ]
 
+            df['Final Score (%)'] = pd.to_numeric(df['Final Score (%)'], errors='coerce').fillna(0)
             return df.sort_values('Final Score (%)', ascending=False).to_dict('records')
         except Exception as e:
             print(f"Error filtering candidates: {e}")
@@ -271,3 +305,43 @@ class ExcelManager:
             return {}
         except Exception:
             return {}
+
+    def assign_candidates_to_job(self, job: Dict, threshold: float = 30.0) -> int:
+        try:
+            if not job or not job.get('Job ID'):
+                return 0
+
+            df = pd.read_excel(self.excel_path)
+            if df.empty:
+                return 0
+
+            job_text = " ".join([
+                str(job.get('Job Title', '')),
+                str(job.get('Job Description', '')),
+                str(job.get('Requirements / Qualifications', '')),
+                str(job.get('Key Responsibilities', ''))
+            ]).lower()
+
+            matched = 0
+            for idx, row in df.iterrows():
+                skills = [s.strip().lower() for s in str(row.get('Skills', '')).split(',') if s.strip()]
+                if not skills:
+                    continue
+
+                hits = sum(1 for s in skills if s and s in job_text)
+                score = round((hits / max(len(skills), 1)) * 100, 2)
+
+                if score >= threshold:
+                    df.at[idx, 'Applied Job ID'] = job.get('Job ID', '')
+                    df.at[idx, 'Applied Job Title'] = job.get('Job Title', '')
+                    df.at[idx, 'Match Score (%)'] = score
+                    df.at[idx, 'Match Source'] = 'CV Bank Match'
+                    df.at[idx, 'Matched On'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+                    matched += 1
+
+            df = df[self.get_columns()]
+            df.to_excel(self.excel_path, index=False, sheet_name='Applicants')
+            return matched
+        except Exception as e:
+            print(f"Error assigning candidates to job: {e}")
+            return 0

@@ -24,7 +24,9 @@ class JobsManager:
             'Requirements / Qualifications',
             'Experience Level',
             'Application Deadline',
-            'Post Date'
+            'Post Date',
+            'Status',
+            'Is Active'
         ]
 
     def ensure_file_exists(self):
@@ -68,7 +70,13 @@ class JobsManager:
                 'Experience Level': self._normalize_text(job_data.get('Experience Level', '')),
                 'Application Deadline': deadline,
                 'Post Date': post_date,
+                'Status': 'Active',
+                'Is Active': 1,
             }
+
+            if not df.empty:
+                df['Status'] = 'Inactive'
+                df['Is Active'] = 0
 
             df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
             df = df[self.get_columns()]
@@ -84,6 +92,8 @@ class JobsManager:
             if df.empty:
                 return []
             df['Post Date'] = pd.to_datetime(df['Post Date'], errors='coerce')
+            if 'Is Active' in df.columns:
+                df['Is Active'] = pd.to_numeric(df['Is Active'], errors='coerce').fillna(0).astype(int)
             df = df.sort_values('Post Date', ascending=False, na_position='last')
             return df.fillna('').to_dict('records')
         except Exception:
@@ -98,3 +108,46 @@ class JobsManager:
             return {}
         except Exception:
             return {}
+
+    def get_active_job(self) -> Dict:
+        try:
+            df = pd.read_excel(self.excel_path)
+            if df.empty:
+                return {}
+
+            if 'Is Active' in df.columns:
+                active = df[pd.to_numeric(df['Is Active'], errors='coerce').fillna(0).astype(int) == 1]
+                if not active.empty:
+                    return active.iloc[0].to_dict()
+
+            if 'Status' in df.columns:
+                active = df[df['Status'].fillna('').astype(str).str.lower() == 'active']
+                if not active.empty:
+                    return active.iloc[0].to_dict()
+
+            return {}
+        except Exception:
+            return {}
+
+    def set_active_job(self, job_id: str) -> Dict:
+        try:
+            df = pd.read_excel(self.excel_path)
+            if df.empty:
+                return {'success': False, 'error': 'No jobs found'}
+
+            target_mask = df['Job ID'].fillna('').astype(str) == str(job_id)
+            if not target_mask.any():
+                return {'success': False, 'error': 'Job not found'}
+
+            df['Status'] = 'Inactive'
+            df['Is Active'] = 0
+            df.loc[target_mask, 'Status'] = 'Active'
+            df.loc[target_mask, 'Is Active'] = 1
+
+            df = df[self.get_columns()]
+            df.to_excel(self.excel_path, index=False, sheet_name='Jobs')
+
+            job = df[target_mask].iloc[0].to_dict()
+            return {'success': True, 'job': job}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}

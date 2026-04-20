@@ -4,6 +4,8 @@ const state = {
     topCandidates: [],
     uploadResults: [],
     jobs: [],
+    activeJob: null,
+    activeMatches: [],
     stats: {},
     charts: {}
 };
@@ -20,6 +22,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadDashboard();
     loadCandidates();
     loadJobs();
+    loadActiveJobMatches();
 });
 
 function initNavigation() {
@@ -130,6 +133,8 @@ function initJobForm() {
             showJobStatus('Job posted successfully.', false);
             resetJobForm(true);
             await loadJobs();
+            await loadActiveJobMatches();
+            await loadCandidates();
         } catch (error) {
             showJobStatus(`Job post failed: ${error.message}`, true);
         }
@@ -171,6 +176,11 @@ function renderJobsBoard() {
         const deadline = job['Application Deadline'] || '';
         const postDate = job['Post Date'] || '';
         const summary = truncateText(job['Job Description'] || '', 180);
+        const isActive = Number(job['Is Active'] || 0) === 1 || String(job['Status'] || '').toLowerCase() === 'active';
+        const activeBadge = isActive ? '<span class="job-pill">Active</span>' : '<span class="job-pill">Inactive</span>';
+        const activeAction = isActive
+            ? '<button class="btn-secondary" disabled>Current Active Job</button>'
+            : `<button class="btn-primary" onclick="activateJob('${encodeURIComponent(job['Job ID'] || '')}', event)">Set Active</button>`;
 
         return `
             <div class="job-card" onclick="openJobModal('${encodeURIComponent(job['Job ID'] || '')}')">
@@ -179,9 +189,10 @@ function renderJobsBoard() {
                         <div class="job-card-title">${escapeHtml(title)}</div>
                         <div class="candidate-email">${escapeHtml(department)}</div>
                     </div>
-                    <div class="job-pill">${escapeHtml(jobType)}</div>
+                    <div>${activeBadge}</div>
                 </div>
                 <div class="job-meta">
+                    <span class="job-pill">${escapeHtml(jobType)}</span>
                     <span class="job-pill">${escapeHtml(workMode)}</span>
                     <span class="job-pill">${escapeHtml(location)}</span>
                     <span class="job-pill">${escapeHtml(job['Experience Level'] || '')}</span>
@@ -191,9 +202,107 @@ function renderJobsBoard() {
                     Post Date: ${escapeHtml(postDate || 'Auto detected')}
                     ${deadline ? ` | Deadline: ${escapeHtml(deadline)}` : ''}
                 </div>
+                <div class="job-detail-actions" style="margin-top: 10px;" onclick="event.stopPropagation()">
+                    ${activeAction}
+                </div>
             </div>
         `;
     }).join('');
+}
+
+async function activateJob(encodedJobId, event) {
+    if (event) {
+        event.stopPropagation();
+    }
+
+    const jobId = decodeURIComponent(encodedJobId);
+    try {
+        const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/activate`, {
+            method: 'POST'
+        });
+        const result = await response.json();
+
+        if (!response.ok || !result.success) {
+            showJobStatus(result.error || 'Failed to activate job.', true);
+            return;
+        }
+
+        showJobStatus(`Job activated. ${result.matched_candidates || 0} CV bank candidate(s) matched.`, false);
+        await Promise.all([loadJobs(), loadActiveJobMatches(), loadCandidates()]);
+    } catch (error) {
+        showJobStatus(`Failed to activate job: ${error.message}`, true);
+    }
+}
+
+async function loadActiveJobMatches() {
+    try {
+        const response = await fetch('/api/jobs/active/matches');
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            return;
+        }
+
+        state.activeJob = result.job || null;
+        state.activeMatches = result.candidates || [];
+        renderActiveJobMatches();
+    } catch (error) {
+        console.error('Failed to load active job matches:', error);
+    }
+}
+
+function renderActiveJobMatches() {
+    const summary = document.getElementById('activeJobSummary');
+    const container = document.getElementById('activeMatchesTable');
+    if (!summary || !container) {
+        return;
+    }
+
+    if (!state.activeJob || !state.activeJob['Job ID']) {
+        summary.textContent = 'No active job selected.';
+        container.innerHTML = '<div class="empty-state">Set one job as active to see CV bank matches.</div>';
+        return;
+    }
+
+    summary.textContent = `Active job: ${state.activeJob['Job Title'] || 'Untitled'} (${state.activeMatches.length} matched candidate(s))`;
+
+    if (!state.activeMatches.length) {
+        container.innerHTML = '<div class="empty-state">No matches yet for the active job.</div>';
+        return;
+    }
+
+    const rows = state.activeMatches
+        .slice(0, 25)
+        .map((candidate) => {
+            const email = candidate['Email'] || '';
+            const fullName = `${candidate['First Name'] || ''} ${candidate['Last Name'] || ''}`.trim();
+            const score = Number(candidate['Final Score (%)'] || 0).toFixed(1);
+            const matchScore = Number(candidate['Match Score (%)'] || 0).toFixed(1);
+            return `
+                <tr>
+                    <td>${escapeHtml(fullName || 'N/A')}</td>
+                    <td>${escapeHtml(email)}</td>
+                    <td>${score}%</td>
+                    <td>${matchScore}%</td>
+                    <td><button class="btn-secondary" onclick="openCandidateModal('${encodeURIComponent(email)}')">View</button></td>
+                </tr>
+            `;
+        })
+        .join('');
+
+    container.innerHTML = `
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>CV Score</th>
+                    <th>Job Match</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+        </table>
+    `;
 }
 
 async function openJobModal(encodedJobId) {
@@ -282,6 +391,9 @@ async function uploadCVFiles(files) {
 
     const formData = new FormData();
     validFiles.forEach((file) => formData.append('files', file));
+    if (state.activeJob && state.activeJob['Job ID']) {
+        formData.append('job_id', state.activeJob['Job ID']);
+    }
 
     try {
         const response = await fetch('/api/upload-cvs', {
@@ -326,7 +438,7 @@ async function uploadCVFiles(files) {
             `Batch complete: ${summary.uploaded || 0} uploaded, ${summary.duplicates || 0} duplicates, ${summary.failed || 0} failed.`,
             false
         );
-        await Promise.all([loadDashboard(), loadCandidates()]);
+        await Promise.all([loadDashboard(), loadCandidates(), loadActiveJobMatches()]);
     } catch (error) {
         showUploadStatus(`Batch upload failed: ${error.message}`, true);
     }
@@ -335,6 +447,9 @@ async function uploadCVFiles(files) {
 async function uploadSingleCV(file) {
     const formData = new FormData();
     formData.append('file', file);
+    if (state.activeJob && state.activeJob['Job ID']) {
+        formData.append('job_id', state.activeJob['Job ID']);
+    }
 
     try {
         const response = await fetch('/api/upload-cv', {
@@ -370,7 +485,7 @@ async function uploadSingleCV(file) {
             }
         ];
         renderUploadResults();
-        await Promise.all([loadDashboard(), loadCandidates()]);
+        await Promise.all([loadDashboard(), loadCandidates(), loadActiveJobMatches()]);
     } catch (error) {
         showUploadStatus(`Upload failed: ${error.message}`, true);
         state.uploadResults = [
@@ -638,7 +753,7 @@ function renderCandidatesTable(containerId, candidates, includeActions) {
     }
 
     const headers = [
-        'Name', 'Email', 'Gender', 'Age', 'Location', 'Education', 'Experience', 'Skills', 'Final Score'
+        'Name', 'Email', 'Gender', 'Age', 'Location', 'Education', 'Experience', 'Skills', 'Final Score', 'Applied Job', 'Match'
     ];
 
     const rows = candidates
@@ -659,6 +774,8 @@ function renderCandidatesTable(containerId, candidates, includeActions) {
                     <td>${escapeHtml(String(candidate['Years of Experience'] || 0))} yrs</td>
                     <td>${escapeHtml(candidate['Skills'] || '')}</td>
                     <td><span class="score ${badge}">${score.toFixed(1)}%</span></td>
+                    <td>${escapeHtml(candidate['Applied Job Title'] || '-')}</td>
+                    <td>${Number(candidate['Match Score (%)'] || 0).toFixed(1)}%</td>
                     ${includeActions ? `<td>
                         <button class="btn-secondary" onclick="openCandidateModal('${encodeURIComponent(email)}')">View</button>
                         <button class="btn-danger" onclick="deleteCandidate('${encodeURIComponent(email)}')">Delete</button>
@@ -720,6 +837,9 @@ async function openCandidateModal(encodedEmail) {
                 ${detailRow('Experience Score', candidate['Experience Score'])}
                 ${detailRow('Skills Score', candidate['Skills Score'])}
                 ${detailRow('Final Score', `${Number(candidate['Final Score (%)'] || 0).toFixed(1)}%`)}
+                ${detailRow('Applied Job', candidate['Applied Job Title'])}
+                ${detailRow('Job Match Score', `${Number(candidate['Match Score (%)'] || 0).toFixed(1)}%`)}
+                ${detailRow('Match Source', candidate['Match Source'])}
             </div>
             <div class="detail-section">
                 <h4>Skills</h4>
@@ -925,3 +1045,4 @@ window.closeCandidateModal = closeCandidateModal;
 window.deleteCandidate = deleteCandidate;
 window.openJobModal = openJobModal;
 window.resetJobForm = resetJobForm;
+window.activateJob = activateJob;

@@ -36,11 +36,49 @@ jobs_manager = JobsManager(os.path.join(DATA_FOLDER, 'jobs.xlsx'))
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(DATA_FOLDER, exist_ok=True)
 
+
+def get_effective_job(job_id: str = "") -> dict:
+    """Return explicit job by id, else active job if available."""
+    if job_id:
+        return jobs_manager.get_job_by_id(job_id) or {}
+    return jobs_manager.get_active_job() or {}
+
+
+def build_job_assignment(candidate_data: dict, job: dict) -> dict:
+    """Create candidate-to-job assignment metadata using skill keyword matching."""
+    if not job or not job.get('Job ID'):
+        return {}
+
+    job_text = " ".join([
+        str(job.get('Job Title', '')),
+        str(job.get('Job Description', '')),
+        str(job.get('Requirements / Qualifications', '')),
+        str(job.get('Key Responsibilities', ''))
+    ]).lower()
+
+    skills = [s.strip().lower() for s in (candidate_data.get('skills', []) or []) if str(s).strip()]
+    if not skills:
+        return {
+            'job_id': job.get('Job ID', ''),
+            'job_title': job.get('Job Title', ''),
+            'match_score': 0,
+            'match_source': 'Active Job'
+        }
+
+    hits = sum(1 for skill in skills if skill in job_text)
+    match_score = round((hits / max(len(skills), 1)) * 100, 2)
+    return {
+        'job_id': job.get('Job ID', ''),
+        'job_title': job.get('Job Title', ''),
+        'match_score': match_score,
+        'match_source': 'Active Job'
+    }
+
 def allowed_file(filename: str) -> bool:
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
-def process_uploaded_file(file_obj):
+def process_uploaded_file(file_obj, job_id: str = ''):
     """Process one uploaded CV and store parsed results in Excel."""
     if not file_obj or file_obj.filename == '':
         return {'success': False, 'status': 400, 'error': 'No file selected'}
@@ -81,7 +119,9 @@ def process_uploaded_file(file_obj):
             }
 
         scores = scoring_system.get_score_breakdown(candidate_data)
-        success = excel_manager.add_candidate(candidate_data, scores, filename)
+        job = get_effective_job(job_id)
+        assignment = build_job_assignment(candidate_data, job)
+        success = excel_manager.add_candidate(candidate_data, scores, filename, assignment)
 
         if not success:
             should_delete_file = True
@@ -95,7 +135,10 @@ def process_uploaded_file(file_obj):
                 'name': f"{candidate_data.get('first_name', '')} {candidate_data.get('last_name', '')}".strip(),
                 'email': candidate_data.get('email', ''),
                 'score': scores.get('final_score', 0),
-                'file_name': filename
+                'file_name': filename,
+                'applied_job_id': assignment.get('job_id', ''),
+                'applied_job_title': assignment.get('job_title', ''),
+                'match_score': assignment.get('match_score', 0)
             }
         }
     finally:
@@ -136,10 +179,13 @@ def create_job():
 
         result = jobs_manager.add_job(payload)
         if result.get('success'):
+            job = result.get('job', {})
+            matched_count = excel_manager.assign_candidates_to_job(job)
             return jsonify({
                 'success': True,
                 'message': 'Job posted successfully',
-                'job': result.get('job', {})
+                'job': job,
+                'matched_candidates': matched_count
             }), 201
 
         return jsonify({'error': result.get('error', 'Failed to create job')}), 500
@@ -159,6 +205,59 @@ def get_job(job_id):
         print(f"Error in get_job: {e}")
         return jsonify({'error': str(e)}), 500
 
+
+@app.route('/api/jobs/<job_id>/activate', methods=['POST'])
+def activate_job(job_id):
+    try:
+        result = jobs_manager.set_active_job(job_id)
+        if not result.get('success'):
+            return jsonify({'error': result.get('error', 'Failed to activate job')}), 400
+
+        matched_count = excel_manager.assign_candidates_to_job(result.get('job', {}))
+        return jsonify({
+            'success': True,
+            'message': 'Job activated successfully',
+            'job': result.get('job', {}),
+            'matched_candidates': matched_count
+        }), 200
+    except Exception as e:
+        print(f"Error in activate_job: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/jobs/active', methods=['GET'])
+def get_active_job():
+    try:
+        job = jobs_manager.get_active_job()
+        if not job:
+            return jsonify({'success': True, 'job': {}}), 200
+        return jsonify({'success': True, 'job': job}), 200
+    except Exception as e:
+        print(f"Error in get_active_job: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/jobs/active/matches', methods=['GET'])
+def get_active_job_matches():
+    try:
+        job = jobs_manager.get_active_job()
+        if not job:
+            return jsonify({'success': True, 'job': {}, 'candidates': [], 'total': 0}), 200
+
+        candidates = excel_manager.filter_candidates({'applied_job_id': job.get('Job ID', '')})
+        candidates = [c for c in candidates if float(c.get('Match Score (%)', 0) or 0) > 0]
+        candidates = sorted(candidates, key=lambda c: float(c.get('Match Score (%)', 0) or 0), reverse=True)
+
+        return jsonify({
+            'success': True,
+            'job': job,
+            'candidates': candidates,
+            'total': len(candidates)
+        }), 200
+    except Exception as e:
+        print(f"Error in get_active_job_matches: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/upload-cv', methods=['POST'])
 def upload_cv():
     """Handle CV upload and parsing"""
@@ -166,7 +265,7 @@ def upload_cv():
         if 'file' not in request.files:
             return jsonify({'error': 'No file provided'}), 400
         
-        result = process_uploaded_file(request.files['file'])
+        result = process_uploaded_file(request.files['file'], request.form.get('job_id', '').strip())
 
         if result.get('success'):
             return jsonify({
@@ -193,13 +292,14 @@ def upload_cvs():
         if not files:
             return jsonify({'error': 'No files provided'}), 400
 
+        job_id = request.form.get('job_id', '').strip()
         results = []
         success_count = 0
         duplicate_count = 0
         failed_count = 0
 
         for file_obj in files:
-            result = process_uploaded_file(file_obj)
+            result = process_uploaded_file(file_obj, job_id)
             if result.get('success'):
                 success_count += 1
                 results.append({'status': 'uploaded', 'candidate': result.get('candidate', {})})
@@ -265,6 +365,8 @@ def get_candidates():
             filters['search'] = request.args.get('search')
         if request.args.get('min_experience'):
             filters['min_experience'] = int(request.args.get('min_experience'))
+        if request.args.get('applied_job_id'):
+            filters['applied_job_id'] = request.args.get('applied_job_id')
         
         candidates = excel_manager.filter_candidates(filters)
         
