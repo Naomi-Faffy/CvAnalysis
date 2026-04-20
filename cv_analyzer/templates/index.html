@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CV Analyzer - Graduate Trainee Recruitment</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
 </head>
@@ -15,14 +18,14 @@
                 <h1>CV Analyzer</h1>
             </div>
             <ul class="nav-menu">
-                <li><a href="#dashboard" class="nav-link active" data-tab="dashboard">📊 Dashboard</a></li>
-                <li><a href="#upload" class="nav-link" data-tab="upload">📄 Upload CV</a></li>
-                <li><a href="#candidates" class="nav-link" data-tab="candidates">👥 Candidates</a></li>
-                <li><a href="#jobs" class="nav-link" data-tab="jobs">💼 Jobs</a></li>
-                <li><a href="#filters" class="nav-link" data-tab="filters">🔍 Search & Filter</a></li>
+                <li><a href="#dashboard" class="nav-link active" data-tab="dashboard">Dashboard</a></li>
+                <li><a href="#upload" class="nav-link" data-tab="upload">Upload CV</a></li>
+                <li><a href="#candidates" class="nav-link" data-tab="candidates">Candidates</a></li>
+                <li><a href="#jobs" class="nav-link" data-tab="jobs">Jobs</a></li>
+                <li><a href="#filters" class="nav-link" data-tab="filters">Search & Filter</a></li>
             </ul>
             <div class="sidebar-footer">
-                <button class="btn-download" onclick="downloadExcel()">📥 Download Excel</button>
+                <button class="btn-download" onclick="downloadExcel()">Download Excel</button>
             </div>
         </nav>
 
@@ -52,43 +55,43 @@
                 <div class="dashboard-grid">
                     <!-- Top Candidates -->
                     <div class="card">
-                        <h3>🏆 Top 10 Candidates</h3>
+                        <h3>Top 10 Candidates</h3>
                         <div id="top-candidates" class="candidates-list"></div>
                     </div>
 
                     <!-- Score Distribution -->
                     <div class="card">
-                        <h3>📈 Score Distribution</h3>
+                        <h3>Score Distribution</h3>
                         <canvas id="scoreChart"></canvas>
                     </div>
 
                     <!-- Gender Distribution -->
                     <div class="card">
-                        <h3>👤 Gender Distribution</h3>
+                        <h3>Gender Distribution</h3>
                         <canvas id="genderChart"></canvas>
                     </div>
 
                     <!-- Location Distribution -->
                     <div class="card">
-                        <h3>🌍 Top Locations</h3>
+                        <h3>Top Locations</h3>
                         <canvas id="locationChart"></canvas>
                     </div>
 
                     <!-- Skills Frequency -->
                     <div class="card">
-                        <h3>💡 Top Skills</h3>
+                        <h3>Top Skills</h3>
                         <canvas id="skillsChart"></canvas>
                     </div>
 
                     <!-- Education Breakdown -->
                     <div class="card">
-                        <h3>🎓 Education Breakdown</h3>
+                        <h3>Education Breakdown</h3>
                         <canvas id="educationChart"></canvas>
                     </div>
 
                     <!-- Experience Distribution -->
                     <div class="card">
-                        <h3>📅 Experience Distribution</h3>
+                        <h3>Experience Distribution</h3>
                         <canvas id="experienceChart"></canvas>
                     </div>
                 </div>
@@ -97,15 +100,10 @@
             <!-- Upload CV Tab -->
             <section id="upload" class="tab-content">
                 <div class="card upload-card">
-                    <h3>📤 Upload CV</h3>
+                    <h3>Upload CV</h3>
                     <p class="subtitle">Supported formats: PDF, DOCX (Max 10MB each). Upload one or many CV files at once.</p>
                     
                     <div class="upload-area" id="dropZone">
-                        <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                            <polyline points="17 8 12 3 7 8"></polyline>
-                            <line x1="12" y1="3" x2="12" y2="15"></line>
-                        </svg>
                         <p>Drag and drop CV files here or click to select multiple files</p>
                         <input type="file" id="fileInput" accept=".pdf,.docx" multiple hidden>
                     </div>
@@ -114,12 +112,12 @@
                 </div>
 
                 <div id="uploadedCandidates" class="card" style="display: none;">
-                    <h3>✅ Recently Uploaded</h3>
+                    <h3>Recently Uploaded</h3>
                     <div id="uploadedList"></div>
                 </div>
 
                 <div id="uploadResultsCard" class="card" style="display: none;">
-                    <h3>📋 Upload Results</h3>
+                    <h3>Upload Results</h3>
                     <div id="uploadResultsTable" class="table-container"></div>
                 </div>
             </section>
@@ -127,7 +125,7 @@
             <!-- Candidates Tab -->
             <section id="candidates" class="tab-content">
                 <div class="card">
-                    <h3>👥 All Candidates</h3>
+                    <h3>All Candidates</h3>
                     <div id="candidatesTable" class="table-container"></div>
                 </div>
             </section>
@@ -136,7 +134,7 @@
             <section id="jobs" class="tab-content">
                 <div class="jobs-layout">
                     <div class="card job-form-card">
-                        <h3>💼 Post a Job</h3>
+                        <h3>Post a Job</h3>
                         <p class="subtitle">Post Date is set automatically when the job is saved.</p>
 
                         <form id="jobForm" class="job-form">
@@ -218,7 +216,7 @@
                     </div>
 
                     <div class="card job-board-card">
-                        <h3>🧾 Client Job Board</h3>
+                        <h3>Client Job Board</h3>
                         <div id="jobsBoard" class="jobs-board"></div>
                     </div>
                 </div>
@@ -227,7 +225,7 @@
             <!-- Filters Tab -->
             <section id="filters" class="tab-content">
                 <div class="card filters-card">
-                    <h3>🔍 Search & Filter</h3>
+                    <h3>Search & Filter</h3>
                     
                     <div class="filter-grid">
                         <div class="filter-group">
@@ -291,7 +289,7 @@
                     <div class="filter-actions">
                         <button class="btn-primary" onclick="applyFilters()">Apply Filters</button>
                         <button class="btn-secondary" onclick="resetFilters()">Reset</button>
-                        <button class="btn-secondary" onclick="exportFiltered()">📥 Download Filtered Excel</button>
+                        <button class="btn-secondary" onclick="exportFiltered()">Download Filtered Excel</button>
                     </div>
                 </div>
 
