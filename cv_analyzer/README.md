@@ -109,7 +109,7 @@ Repository requirements already in place:
 Render settings:
 
 - Build Command:
-  - `python -m pip install --upgrade pip setuptools wheel -r cv_analyzer/requirements.txt`
+  - `pip install -r requirements.txt`
 - Start Command:
   - `gunicorn --chdir cv_analyzer app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120`
 
