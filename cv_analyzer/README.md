@@ -111,11 +111,12 @@ Render settings:
 - Build Command:
   - `pip install -r requirements.txt`
 - Start Command:
-  - `gunicorn --chdir cv_analyzer app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120`
+  - `gunicorn --chdir cv_analyzer app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 120`
 
 Environment variables:
 
 - `PYTHON_VERSION=3.11.11`
+- `CV_ANALYZER_DATA_DIR=/opt/render/project/src/cv_analyzer/data`
 
 Instance size guidance:
 

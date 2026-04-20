@@ -29,6 +29,28 @@ class JobsManager:
             'Is Active'
         ]
 
+    def _empty_dataframe(self) -> pd.DataFrame:
+        return pd.DataFrame(columns=self.get_columns())
+
+    def _load_dataframe(self) -> pd.DataFrame:
+        try:
+            if not os.path.exists(self.excel_path):
+                return self._empty_dataframe()
+
+            df = pd.read_excel(self.excel_path)
+            required = self.get_columns()
+            for col in required:
+                if col not in df.columns:
+                    df[col] = 0 if col == 'Is Active' else ''
+            return df[required]
+        except Exception as e:
+            print(f"Error loading jobs workbook; using empty dataframe: {e}")
+            return self._empty_dataframe()
+
+    def _save_dataframe(self, df: pd.DataFrame):
+        os.makedirs(os.path.dirname(self.excel_path), exist_ok=True)
+        df[self.get_columns()].to_excel(self.excel_path, index=False, sheet_name='Jobs')
+
     def ensure_file_exists(self):
         os.makedirs(os.path.dirname(self.excel_path), exist_ok=True)
         if not os.path.exists(self.excel_path):
@@ -36,7 +58,7 @@ class JobsManager:
             df.to_excel(self.excel_path, index=False, sheet_name='Jobs')
             return
 
-        df = pd.read_excel(self.excel_path)
+        df = self._load_dataframe()
         required = self.get_columns()
         changed = False
         for col in required:
@@ -52,7 +74,7 @@ class JobsManager:
 
     def add_job(self, job_data: Dict) -> Dict:
         try:
-            df = pd.read_excel(self.excel_path)
+            df = self._load_dataframe()
             job_id = f"JOB-{str(uuid.uuid4())[:8].upper()}"
             post_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
@@ -79,8 +101,7 @@ class JobsManager:
                 df['Is Active'] = 0
 
             df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-            df = df[self.get_columns()]
-            df.to_excel(self.excel_path, index=False, sheet_name='Jobs')
+            self._save_dataframe(df)
             return {'success': True, 'job': new_row}
         except Exception as e:
             print(f"Error adding job: {e}")
@@ -88,7 +109,7 @@ class JobsManager:
 
     def get_all_jobs(self) -> List[Dict]:
         try:
-            df = pd.read_excel(self.excel_path)
+            df = self._load_dataframe()
             if df.empty:
                 return []
             df['Post Date'] = pd.to_datetime(df['Post Date'], errors='coerce')
@@ -101,7 +122,7 @@ class JobsManager:
 
     def get_job_by_id(self, job_id: str) -> Dict:
         try:
-            df = pd.read_excel(self.excel_path)
+            df = self._load_dataframe()
             result = df[df['Job ID'].fillna('').astype(str) == str(job_id)]
             if not result.empty:
                 return result.iloc[0].to_dict()
@@ -111,7 +132,7 @@ class JobsManager:
 
     def get_active_job(self) -> Dict:
         try:
-            df = pd.read_excel(self.excel_path)
+            df = self._load_dataframe()
             if df.empty:
                 return {}
 
@@ -131,7 +152,7 @@ class JobsManager:
 
     def set_active_job(self, job_id: str) -> Dict:
         try:
-            df = pd.read_excel(self.excel_path)
+            df = self._load_dataframe()
             if df.empty:
                 return {'success': False, 'error': 'No jobs found'}
 
@@ -144,8 +165,7 @@ class JobsManager:
             df.loc[target_mask, 'Status'] = 'Active'
             df.loc[target_mask, 'Is Active'] = 1
 
-            df = df[self.get_columns()]
-            df.to_excel(self.excel_path, index=False, sheet_name='Jobs')
+            self._save_dataframe(df)
 
             job = df[target_mask].iloc[0].to_dict()
             return {'success': True, 'job': job}

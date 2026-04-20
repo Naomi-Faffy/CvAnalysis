@@ -17,7 +17,7 @@ CORS(app)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RUNTIME_BASE_DIR = BASE_DIR
 UPLOAD_FOLDER = os.path.join(RUNTIME_BASE_DIR, 'uploads')
-DATA_FOLDER = os.path.join(RUNTIME_BASE_DIR, 'data')
+DATA_FOLDER = os.getenv('CV_ANALYZER_DATA_DIR', os.path.join(RUNTIME_BASE_DIR, 'data'))
 ALLOWED_EXTENSIONS = {'pdf', 'docx'}
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 APPLICANTS_FILE = os.path.join(DATA_FOLDER, 'applicants.xlsx')
