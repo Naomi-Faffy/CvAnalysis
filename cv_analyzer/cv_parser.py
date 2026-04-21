@@ -21,7 +21,10 @@ class CVParser:
             'Machine Learning', 'Data Analysis', 'Statistics', 'Communication', 'Leadership',
             'Project Management', 'Agile', 'Scrum', 'MongoDB', 'PostgreSQL', 'MySQL', 'API',
             'REST', 'GraphQL', 'CI/CD', 'Jenkins', 'GitHub', 'Gitlab', 'Bitbucket', 'Jira',
-            'Salesforce', 'SAP', 'ERP', 'CRM', 'Finance', 'Accounting', 'Marketing', 'Sales'
+            'Salesforce', 'SAP', 'ERP', 'CRM', 'Finance', 'Accounting', 'Marketing', 'Sales',
+            'Hardware', 'Embedded Systems', 'Firmware', 'Microcontroller', 'Electronics', 'PCB',
+            'PLC', 'Instrumentation', 'Networking', 'Router', 'Switch', 'TCP/IP', 'IoT',
+            'RF', 'Signal Processing', 'Electrical Engineering', 'Mechatronics', 'AutoCAD', 'SolidWorks'
         ]
         self.skill_aliases = {
             'js': 'JavaScript',
@@ -253,22 +256,33 @@ class CVParser:
         
         # Look for years of experience
         year_patterns = [
+            r'(\d+(?:\.\d+)?)\s*(?:\+)?\s*(?:years?|yrs?)\s*(?:of)?\s*(?:experience)?',
             r'(\d+)\s*(?:\+)?\s*years?',
             r'years?[\s:]+(\d+)',
+            r'\b(\d+)\s*yrs?\b',
         ]
         
         for pattern in year_patterns:
             matches = re.findall(pattern, text, re.IGNORECASE)
             if matches:
                 try:
-                    experience['years'] = int(matches[0])
+                    experience['years'] = int(float(matches[0]))
                     break
+                except Exception:
+                    pass
+
+        if experience['years'] == 0:
+            timeline_matches = re.findall(r'(?:19|20)\d{2}', text)
+            if len(timeline_matches) >= 2:
+                try:
+                    years_span = abs(int(timeline_matches[0]) - int(timeline_matches[-1]))
+                    experience['years'] = max(0, years_span)
                 except Exception:
                     pass
         
         # Look for job titles
         job_keywords = ['developer', 'engineer', 'manager', 'analyst', 'designer', 
-                       'consultant', 'architect', 'lead', 'senior', 'junior']
+                       'consultant', 'architect', 'lead', 'senior', 'junior', 'technician', 'specialist']
         
         lines = text.split('\n')
         for line in lines:

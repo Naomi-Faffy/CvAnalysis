@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 from typing import Dict, List
 
@@ -66,6 +67,70 @@ class ExcelManager:
 
         return [{key: _to_py(val) for key, val in row.items()} for row in records]
 
+    def _extract_profile_keywords(self, candidate_data: Dict) -> str:
+        raw_text = str(candidate_data.get('raw_text', '') or '')
+        skills = [str(skill).strip() for skill in (candidate_data.get('skills', []) or []) if str(skill).strip()]
+        education = candidate_data.get('education', []) or []
+        current_role = str(candidate_data.get('experience', {}).get('current_role', '') or '')
+
+        combined = ' '.join([
+            raw_text,
+            ' '.join(skills),
+            ' '.join(item.get('qualification', '') for item in education if item.get('qualification')),
+            current_role
+        ]).lower()
+
+        tokens = re.findall(r'\b[a-zA-Z][a-zA-Z0-9+.#/-]{2,}\b', combined)
+        stop_words = {
+            'the', 'and', 'for', 'with', 'from', 'that', 'this', 'have', 'has', 'was', 'were', 'are', 'your', 'you',
+            'but', 'not', 'can', 'will', 'our', 'their', 'they', 'them', 'into', 'about', 'using', 'used', 'use',
+            'role', 'cv', 'resume', 'experience', 'skills', 'work', 'team', 'year', 'years', 'able', 'ability',
+            'responsible', 'responsibilities', 'requirements', 'qualification', 'qualifications'
+        }
+
+        deduped = []
+        seen = set()
+        for token in tokens:
+            token = token.strip().lower()
+            if len(token) < 3 or token in stop_words or token in seen:
+                continue
+            seen.add(token)
+            deduped.append(token)
+
+        return ' '.join(deduped[:250])
+
+    def _candidate_match_terms(self, row: pd.Series) -> set:
+        keywords = set(re.findall(r'\b[a-zA-Z][a-zA-Z0-9+.#/-]{2,}\b', str(row.get('Profile Keywords', '')).lower()))
+        skills = {s.strip().lower() for s in str(row.get('Skills', '')).split(',') if s.strip()}
+        derived = set(re.findall(r'\b[a-zA-Z][a-zA-Z0-9+.#/-]{2,}\b', ' '.join([
+            str(row.get('Education', '') or ''),
+            str(row.get('Education Level', '') or ''),
+            str(row.get('Current Role', '') or '')
+        ]).lower()))
+        return {term for term in (keywords | skills | derived) if len(term) > 2}
+
+    def _job_keywords(self, job: Dict) -> set:
+        job_text = ' '.join([
+            str(job.get('Job Title', '')),
+            str(job.get('Department / Category', '')),
+            str(job.get('Job Description', '')),
+            str(job.get('Requirements / Qualifications', '')),
+            str(job.get('Key Responsibilities', '')),
+            str(job.get('Experience Level', '')),
+            str(job.get('Work Mode', '')),
+            str(job.get('Location', '')),
+        ]).lower()
+
+        keywords = set(re.findall(r'\b[a-zA-Z][a-zA-Z0-9+.#/-]{2,}\b', job_text))
+        stop_words = {
+            'the', 'and', 'for', 'with', 'from', 'that', 'this', 'have', 'has', 'was', 'were', 'are', 'your', 'you',
+            'but', 'not', 'can', 'will', 'our', 'their', 'they', 'them', 'into', 'about', 'using', 'used', 'use',
+            'role', 'job', 'jobs', 'position', 'candidate', 'applicants', 'application', 'requirements',
+            'responsibilities', 'responsibility', 'skills', 'experience', 'qualification', 'qualifications',
+            'department', 'category', 'work', 'mode', 'location'
+        }
+        return {term for term in keywords if term not in stop_words}
+
     def get_columns(self) -> List[str]:
         return [
             'Applicant ID',
@@ -97,6 +162,7 @@ class ExcelManager:
             'Match Score (%)',
             'Match Source',
             'Matched On',
+            'Profile Keywords',
             'Upload Date',
             'CV File Name'
         ]
@@ -173,6 +239,7 @@ class ExcelManager:
             'Match Score (%)': job_assignment.get('match_score', 0),
             'Match Source': job_assignment.get('match_source', ''),
             'Matched On': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S') if job_assignment.get('job_id') else '',
+            'Profile Keywords': self._extract_profile_keywords(candidate_data),
             'Upload Date': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
             'CV File Name': file_name,
         }
@@ -397,21 +464,24 @@ class ExcelManager:
             if df.empty:
                 return 0
 
-            job_text = " ".join([
-                str(job.get('Job Title', '')),
-                str(job.get('Job Description', '')),
-                str(job.get('Requirements / Qualifications', '')),
-                str(job.get('Key Responsibilities', ''))
-            ]).lower()
+            job_keywords = self._job_keywords(job)
+            if not job_keywords:
+                return 0
 
             matched = 0
             for idx, row in df.iterrows():
-                skills = [s.strip().lower() for s in str(row.get('Skills', '')).split(',') if s.strip()]
-                if not skills:
+                candidate_terms = self._candidate_match_terms(row)
+                if not candidate_terms:
                     continue
 
-                hits = sum(1 for s in skills if s and s in job_text)
-                score = round((hits / max(len(skills), 1)) * 100, 2)
+                keyword_hits = candidate_terms & job_keywords
+                keyword_score = (len(keyword_hits) / max(len(job_keywords), 1)) * 100
+
+                title_terms = set(re.findall(r'\b[a-zA-Z][a-zA-Z0-9+.#/-]{2,}\b', str(job.get('Job Title', '')).lower()))
+                title_terms = {term for term in title_terms if term not in {'the', 'and', 'for', 'with', 'from', 'that', 'this', 'have', 'has', 'was', 'were', 'are', 'your', 'you'}}
+                title_score = (len(candidate_terms & title_terms) / max(len(title_terms), 1)) * 100 if title_terms else 0
+
+                score = round((keyword_score * 0.75) + (title_score * 0.25), 2)
 
                 if score >= threshold:
                     df.at[idx, 'Applied Job ID'] = job.get('Job ID', '')

@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, jsonify, send_file
 from flask_cors import CORS
 import os
+import re
 from io import BytesIO
 from werkzeug.utils import secure_filename
 from cv_parser import CVParser
@@ -49,15 +50,38 @@ def build_job_assignment(candidate_data: dict, job: dict) -> dict:
     if not job or not job.get('Job ID'):
         return {}
 
+    def normalize_terms(text: str) -> set:
+        tokens = set(re.findall(r'\b[a-zA-Z][a-zA-Z0-9+.#/-]{2,}\b', text.lower()))
+        stop_words = {
+            'the', 'and', 'for', 'with', 'from', 'that', 'this', 'have', 'has', 'was', 'were', 'are', 'your', 'you',
+            'but', 'not', 'can', 'will', 'our', 'their', 'they', 'them', 'into', 'about', 'using', 'used', 'use',
+            'role', 'job', 'jobs', 'position', 'candidate', 'applicants', 'application', 'requirements',
+            'responsibilities', 'responsibility', 'skills', 'experience', 'qualification', 'qualifications',
+            'department', 'category', 'work', 'mode', 'location'
+        }
+        return {token for token in tokens if token not in stop_words}
+
     job_text = " ".join([
         str(job.get('Job Title', '')),
+        str(job.get('Department / Category', '')),
         str(job.get('Job Description', '')),
         str(job.get('Requirements / Qualifications', '')),
-        str(job.get('Key Responsibilities', ''))
-    ]).lower()
+        str(job.get('Key Responsibilities', '')),
+        str(job.get('Experience Level', '')),
+        str(job.get('Work Mode', '')),
+        str(job.get('Location', '')),
+    ])
+    job_terms = normalize_terms(job_text)
 
-    skills = [s.strip().lower() for s in (candidate_data.get('skills', []) or []) if str(s).strip()]
-    if not skills:
+    cv_text = " ".join([
+        str(candidate_data.get('raw_text', '') or ''),
+        ' '.join(candidate_data.get('skills', []) or []),
+        ' '.join(item.get('qualification', '') for item in (candidate_data.get('education', []) or []) if item.get('qualification')),
+        str(candidate_data.get('experience', {}).get('current_role', '') or ''),
+    ])
+    candidate_terms = normalize_terms(cv_text)
+
+    if not candidate_terms or not job_terms:
         return {
             'job_id': job.get('Job ID', ''),
             'job_title': job.get('Job Title', ''),
@@ -65,8 +89,10 @@ def build_job_assignment(candidate_data: dict, job: dict) -> dict:
             'match_source': 'Active Job'
         }
 
-    hits = sum(1 for skill in skills if skill in job_text)
-    match_score = round((hits / max(len(skills), 1)) * 100, 2)
+    keyword_score = (len(candidate_terms & job_terms) / max(len(job_terms), 1)) * 100
+    title_terms = normalize_terms(str(job.get('Job Title', '')))
+    title_score = (len(candidate_terms & title_terms) / max(len(title_terms), 1)) * 100 if title_terms else 0
+    match_score = round((keyword_score * 0.75) + (title_score * 0.25), 2)
     return {
         'job_id': job.get('Job ID', ''),
         'job_title': job.get('Job Title', ''),
