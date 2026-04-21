@@ -246,6 +246,10 @@ class ExcelManager:
         freq = {k: v for k, v in freq.items() if v > 0}
         return dict(sorted(freq.items(), key=lambda item: item[1], reverse=True))
 
+    def _experience_years_series(self, series: pd.Series) -> pd.Series:
+        extracted = series.fillna('').astype(str).str.extract(r'(\d+(?:\.\d+)?)')[0]
+        return pd.to_numeric(extracted, errors='coerce').fillna(0)
+
     def get_statistics(self) -> Dict:
         try:
             df = self._load_dataframe()
@@ -265,10 +269,22 @@ class ExcelManager:
             if 'Final Score (%)' in df.columns:
                 df['Final Score (%)'] = pd.to_numeric(df['Final Score (%)'], errors='coerce').fillna(0)
             if 'Years of Experience' in df.columns:
-                df['Years of Experience'] = pd.to_numeric(df['Years of Experience'], errors='coerce').fillna(0)
+                df['Years of Experience'] = self._experience_years_series(df['Years of Experience'])
 
             def _plain_counts(series):
                 return {str(key): int(value) for key, value in series.fillna('Unknown').value_counts().to_dict().items()}
+
+            experience_distribution = {
+                '0 years': int((df['Years of Experience'] <= 0).sum()) if 'Years of Experience' in df.columns else 0,
+                '1-2 years': int(((df['Years of Experience'] > 0) & (df['Years of Experience'] <= 2)).sum()) if 'Years of Experience' in df.columns else 0,
+                '3-5 years': int(((df['Years of Experience'] > 2) & (df['Years of Experience'] <= 5)).sum()) if 'Years of Experience' in df.columns else 0,
+                '6+ years': int((df['Years of Experience'] > 5).sum()) if 'Years of Experience' in df.columns else 0,
+            }
+
+            requirements_fit_distribution = {
+                'All Applicants': int(len(df)),
+                'Meet >=80%': int((df['Final Score (%)'] >= 80).sum()) if 'Final Score (%)' in df.columns else 0
+            }
 
             stats = {
                 'total_applicants': int(len(df)),
@@ -277,7 +293,8 @@ class ExcelManager:
                 'location_distribution': _plain_counts(df['Country']) if 'Country' in df.columns else {},
                 'city_distribution': _plain_counts(df['City']) if 'City' in df.columns else {},
                 'education_distribution': _plain_counts(df['Education Level']) if 'Education Level' in df.columns else {},
-                'experience_distribution': {str(k): int(v) for k, v in (df['Years of Experience'].fillna(0).astype(int).value_counts().sort_index().to_dict().items())} if 'Years of Experience' in df.columns else {},
+                'experience_distribution': experience_distribution,
+                'requirements_fit_distribution': requirements_fit_distribution,
                 'score_distribution': self._score_distribution(df),
                 'skills_frequency': self._skills_frequency(df)
             }

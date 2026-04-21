@@ -689,12 +689,14 @@ function renderCharts() {
         backgroundColor: chartPalette
     });
 
-    createOrUpdateChart('experienceChart', 'line', stats.experience_distribution || {}, {
+    createOrUpdateChart('experienceChart', 'bar', stats.experience_distribution || {}, {
         label: 'Candidates',
-        borderColor: '#22489A',
-        backgroundColor: 'rgba(34,72,154,0.2)',
-        fill: true,
-        tension: 0.2
+        backgroundColor: '#3058A6'
+    });
+
+    createOrUpdateChart('requirementsFitChart', 'bar', stats.requirements_fit_distribution || {}, {
+        label: 'Count',
+        backgroundColor: ['#93C5FD', '#2ECC71']
     });
 }
 
