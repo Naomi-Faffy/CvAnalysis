@@ -367,8 +367,8 @@ def get_candidates():
             filters['min_experience'] = int(request.args.get('min_experience'))
         if request.args.get('applied_job_id'):
             filters['applied_job_id'] = request.args.get('applied_job_id')
-        
-        candidates = excel_manager.filter_candidates(filters)
+
+        candidates = excel_manager.get_all_candidates() if not filters else excel_manager.filter_candidates(filters)
         
         return jsonify({
             'success': True,

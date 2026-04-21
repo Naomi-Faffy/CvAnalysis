@@ -52,7 +52,19 @@ class ExcelManager:
                 safe_df[col] = pd.to_datetime(safe_df[col], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S')
                 safe_df[col] = safe_df[col].where(pd.notnull(safe_df[col]), '')
 
-        return safe_df.to_dict('records')
+        records = safe_df.to_dict('records')
+
+        def _to_py(value):
+            if hasattr(value, 'item'):
+                try:
+                    return value.item()
+                except Exception:
+                    return str(value)
+            if pd.isna(value):
+                return None
+            return value
+
+        return [{key: _to_py(val) for key, val in row.items()} for row in records]
 
     def get_columns(self) -> List[str]:
         return [
@@ -255,14 +267,17 @@ class ExcelManager:
             if 'Years of Experience' in df.columns:
                 df['Years of Experience'] = pd.to_numeric(df['Years of Experience'], errors='coerce').fillna(0)
 
+            def _plain_counts(series):
+                return {str(key): int(value) for key, value in series.fillna('Unknown').value_counts().to_dict().items()}
+
             stats = {
-                'total_applicants': len(df),
-                'average_score': round(df['Final Score (%)'].mean(), 2) if 'Final Score (%)' in df.columns else 0,
-                'gender_distribution': df['Gender'].fillna('Not specified').value_counts().to_dict() if 'Gender' in df.columns else {},
-                'location_distribution': df['Country'].fillna('Unknown').value_counts().to_dict() if 'Country' in df.columns else {},
-                'city_distribution': df['City'].fillna('Unknown').value_counts().to_dict() if 'City' in df.columns else {},
-                'education_distribution': df['Education Level'].fillna('Unknown').value_counts().to_dict() if 'Education Level' in df.columns else {},
-                'experience_distribution': df['Years of Experience'].fillna(0).astype(int).value_counts().sort_index().to_dict() if 'Years of Experience' in df.columns else {},
+                'total_applicants': int(len(df)),
+                'average_score': float(round(df['Final Score (%)'].mean(), 2)) if 'Final Score (%)' in df.columns else 0,
+                'gender_distribution': _plain_counts(df['Gender']) if 'Gender' in df.columns else {},
+                'location_distribution': _plain_counts(df['Country']) if 'Country' in df.columns else {},
+                'city_distribution': _plain_counts(df['City']) if 'City' in df.columns else {},
+                'education_distribution': _plain_counts(df['Education Level']) if 'Education Level' in df.columns else {},
+                'experience_distribution': {str(k): int(v) for k, v in (df['Years of Experience'].fillna(0).astype(int).value_counts().sort_index().to_dict().items())} if 'Years of Experience' in df.columns else {},
                 'score_distribution': self._score_distribution(df),
                 'skills_frequency': self._skills_frequency(df)
             }
@@ -274,6 +289,12 @@ class ExcelManager:
     def filter_candidates(self, filters: Dict) -> List[Dict]:
         try:
             df = self._load_dataframe()
+
+            if not filters:
+                if 'Final Score (%)' in df.columns:
+                    df['Final Score (%)'] = pd.to_numeric(df['Final Score (%)'], errors='coerce').fillna(0)
+                    df = df.sort_values('Final Score (%)', ascending=False)
+                return self._json_safe_records(df)
 
             if 'min_score' in filters:
                 df = df[pd.to_numeric(df['Final Score (%)'], errors='coerce').fillna(0) >= float(filters['min_score'])]

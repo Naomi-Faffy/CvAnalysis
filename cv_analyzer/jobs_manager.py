@@ -51,6 +51,30 @@ class JobsManager:
         os.makedirs(os.path.dirname(self.excel_path), exist_ok=True)
         df[self.get_columns()].to_excel(self.excel_path, index=False, sheet_name='Jobs')
 
+    def _json_safe_records(self, df: pd.DataFrame) -> List[Dict]:
+        if df.empty:
+            return []
+
+        safe_df = df.copy()
+        if 'Post Date' in safe_df.columns:
+            safe_df['Post Date'] = pd.to_datetime(safe_df['Post Date'], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S')
+            safe_df['Post Date'] = safe_df['Post Date'].where(pd.notnull(safe_df['Post Date']), '')
+
+        safe_df = safe_df.where(pd.notnull(safe_df), None)
+        records = safe_df.to_dict('records')
+
+        def _to_py(value):
+            if hasattr(value, 'item'):
+                try:
+                    return value.item()
+                except Exception:
+                    return str(value)
+            if pd.isna(value):
+                return None
+            return value
+
+        return [{key: _to_py(val) for key, val in row.items()} for row in records]
+
     def ensure_file_exists(self):
         os.makedirs(os.path.dirname(self.excel_path), exist_ok=True)
         if not os.path.exists(self.excel_path):
@@ -116,7 +140,7 @@ class JobsManager:
             if 'Is Active' in df.columns:
                 df['Is Active'] = pd.to_numeric(df['Is Active'], errors='coerce').fillna(0).astype(int)
             df = df.sort_values('Post Date', ascending=False, na_position='last')
-            return df.fillna('').to_dict('records')
+            return self._json_safe_records(df)
         except Exception:
             return []
 
@@ -125,7 +149,8 @@ class JobsManager:
             df = self._load_dataframe()
             result = df[df['Job ID'].fillna('').astype(str) == str(job_id)]
             if not result.empty:
-                return result.iloc[0].to_dict()
+                records = self._json_safe_records(result.head(1))
+                return records[0] if records else {}
             return {}
         except Exception:
             return {}
@@ -139,12 +164,14 @@ class JobsManager:
             if 'Is Active' in df.columns:
                 active = df[pd.to_numeric(df['Is Active'], errors='coerce').fillna(0).astype(int) == 1]
                 if not active.empty:
-                    return active.iloc[0].to_dict()
+                    records = self._json_safe_records(active.head(1))
+                    return records[0] if records else {}
 
             if 'Status' in df.columns:
                 active = df[df['Status'].fillna('').astype(str).str.lower() == 'active']
                 if not active.empty:
-                    return active.iloc[0].to_dict()
+                    records = self._json_safe_records(active.head(1))
+                    return records[0] if records else {}
 
             return {}
         except Exception:
@@ -167,7 +194,8 @@ class JobsManager:
 
             self._save_dataframe(df)
 
-            job = df[target_mask].iloc[0].to_dict()
+            records = self._json_safe_records(df[target_mask].head(1))
+            job = records[0] if records else {}
             return {'success': True, 'job': job}
         except Exception as e:
             return {'success': False, 'error': str(e)}
