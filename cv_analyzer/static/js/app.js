@@ -977,6 +977,45 @@ function downloadExcel() {
     window.location.href = '/api/download-excel';
 }
 
+async function downloadActiveJobMatches() {
+    if (!state.activeJob || !state.activeJob['Job ID']) {
+        alert('No active job selected. Set a job as active first.');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/jobs/active/matches/download');
+
+        if (!response.ok) {
+            let message = 'Failed to download active job applications.';
+            try {
+                const result = await response.json();
+                message = result.error || message;
+            } catch (e) {
+                message = 'Failed to download active job applications.';
+            }
+            alert(message);
+            return;
+        }
+
+        const blob = await response.blob();
+        const downloadUrl = window.URL.createObjectURL(blob);
+        const disposition = response.headers.get('Content-Disposition') || '';
+        const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+        const filename = filenameMatch ? filenameMatch[1] : 'active_job_applications.xlsx';
+
+        const anchor = document.createElement('a');
+        anchor.href = downloadUrl;
+        anchor.download = filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        window.URL.revokeObjectURL(downloadUrl);
+    } catch (error) {
+        alert(`Failed to download active job applications: ${error.message}`);
+    }
+}
+
 function detailRow(label, value) {
     return `
         <div class="detail-item">
@@ -1042,6 +1081,7 @@ window.applyFilters = applyFilters;
 window.resetFilters = resetFilters;
 window.exportFiltered = exportFiltered;
 window.downloadExcel = downloadExcel;
+window.downloadActiveJobMatches = downloadActiveJobMatches;
 window.openCandidateModal = openCandidateModal;
 window.closeCandidateModal = closeCandidateModal;
 window.deleteCandidate = deleteCandidate;

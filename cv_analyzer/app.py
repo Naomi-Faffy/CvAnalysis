@@ -145,7 +145,9 @@ def process_uploaded_file(file_obj, job_id: str = ''):
             }
 
         scores = scoring_system.get_score_breakdown(candidate_data)
-        job = get_effective_job(job_id)
+        # Business rule: when a job is active, all uploads are applications for that active job.
+        active_job = jobs_manager.get_active_job() or {}
+        job = active_job if active_job.get('Job ID') else get_effective_job(job_id)
         assignment = build_job_assignment(candidate_data, job)
         success = excel_manager.add_candidate(candidate_data, scores, filename, assignment)
 
@@ -271,7 +273,6 @@ def get_active_job_matches():
             return jsonify({'success': True, 'job': {}, 'candidates': [], 'total': 0}), 200
 
         candidates = excel_manager.filter_candidates({'applied_job_id': job.get('Job ID', '')})
-        candidates = [c for c in candidates if float(c.get('Match Score (%)', 0) or 0) > 0]
         candidates = sorted(candidates, key=lambda c: float(c.get('Match Score (%)', 0) or 0), reverse=True)
 
         return jsonify({
@@ -282,6 +283,54 @@ def get_active_job_matches():
         }), 200
     except Exception as e:
         print(f"Error in get_active_job_matches: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/jobs/active/matches/download', methods=['GET'])
+def download_active_job_matches():
+    """Download an Excel file for candidates assigned to the current active job."""
+    try:
+        job = jobs_manager.get_active_job()
+        if not job:
+            return jsonify({'error': 'No active job selected'}), 400
+
+        candidates = excel_manager.filter_candidates({'applied_job_id': job.get('Job ID', '')})
+        if not candidates:
+            return jsonify({'error': 'No applications found for the active job'}), 404
+
+        df = pd.DataFrame(candidates)
+        if 'Match Score (%)' in df.columns:
+            df['Match Score (%)'] = pd.to_numeric(df['Match Score (%)'], errors='coerce').fillna(0)
+            df = df.sort_values(by='Match Score (%)', ascending=False)
+
+        preferred_cols = [
+            'Applicant ID', 'First Name', 'Last Name', 'Email', 'Phone',
+            'Education Level', 'Years of Experience', 'Current Role', 'Skills',
+            'Final Score (%)', 'Applied Job ID', 'Applied Job Title',
+            'Match Score (%)', 'Match Source', 'Matched On', 'Upload Date', 'CV File Name'
+        ]
+        export_cols = [col for col in preferred_cols if col in df.columns]
+        if export_cols:
+            df = df[export_cols]
+
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            sheet_name = 'Active Job Applications'
+            df.to_excel(writer, index=False, sheet_name=sheet_name)
+
+        output.seek(0)
+        safe_job_title = re.sub(r'[^a-zA-Z0-9_-]+', '_', str(job.get('Job Title', 'active_job')).strip()).strip('_')
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"active_job_{safe_job_title or 'applications'}_{timestamp}.xlsx"
+
+        return send_file(
+            output,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+    except Exception as e:
+        print(f"Error in download_active_job_matches: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/upload-cv', methods=['POST'])
