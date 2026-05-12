@@ -7,6 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
 </head>
@@ -33,7 +34,7 @@
         <!-- Main Content -->
         <main class="main-content">
             <!-- Top Bar -->
-            <header class="top-bar">
+            <header class="top-bar dashboard-hero">
                 <h2 id="page-title">Dashboard</h2>
                 <div class="stats-summary">
                     <div class="stat-card">
@@ -53,9 +54,9 @@
 
             <!-- Dashboard Tab -->
             <section id="dashboard" class="tab-content active">
-                <div class="dashboard-grid">
+                <div class="dashboard-grid bento-grid">
                     <!-- Top Candidates -->
-                    <div class="card">
+                    <div class="card card--featured">
                         <h3>Top 10 Candidates</h3>
                         <div id="top-candidates" class="candidates-list"></div>
                     </div>

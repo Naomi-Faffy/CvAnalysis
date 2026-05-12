@@ -4,14 +4,24 @@ from typing import Dict, List, Tuple
 
 import pdfplumber
 from docx import Document
-import spacy
+
+try:
+    import spacy
+    SPACY_AVAILABLE = True
+except ImportError:
+    SPACY_AVAILABLE = False
+    spacy = None
 
 class CVParser:
     def __init__(self):
-        try:
-            self.nlp = spacy.load("en_core_web_sm")
-        except Exception:
-            print("Warning: spacy model not loaded. Install with: python -m spacy download en_core_web_sm")
+        if SPACY_AVAILABLE:
+            try:
+                self.nlp = spacy.load("en_core_web_sm")
+            except Exception:
+                print("Warning: spacy model not loaded. Install with: python -m spacy download en_core_web_sm")
+                self.nlp = None
+        else:
+            print("Warning: spacy not installed. Install with: pip install spacy")
             self.nlp = None
         
         self.common_skills = [

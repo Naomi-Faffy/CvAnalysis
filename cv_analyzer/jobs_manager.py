@@ -5,9 +5,12 @@ from typing import Dict, List
 
 import pandas as pd
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 class JobsManager:
-    def __init__(self, excel_path: str = "data/jobs.xlsx"):
+    def __init__(self, excel_path: str = None):
+        if excel_path is None:
+            excel_path = os.path.join(BASE_DIR, 'data', 'jobs.xlsx')
         self.excel_path = excel_path
         self.ensure_file_exists()
 

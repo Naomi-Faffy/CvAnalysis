@@ -5,9 +5,12 @@ from typing import Dict, List
 
 import pandas as pd
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 class ExcelManager:
-    def __init__(self, excel_path: str = "data/applicants.xlsx"):
+    def __init__(self, excel_path: str = None):
+        if excel_path is None:
+            excel_path = os.path.join(BASE_DIR, 'data', 'applicants.xlsx')
         self.excel_path = excel_path
         self.skill_columns = [
             'Python', 'JavaScript', 'SQL', 'Git', 'Java', 'C++', 'HTML', 'CSS',

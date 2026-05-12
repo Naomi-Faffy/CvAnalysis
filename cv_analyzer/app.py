@@ -14,6 +14,9 @@ from datetime import datetime
 app = Flask(__name__)
 CORS(app)
 
+# Security settings
+app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
+
 # Configuration
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RUNTIME_BASE_DIR = BASE_DIR
@@ -601,4 +604,4 @@ def request_entity_too_large(error):
 
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=False, host='0.0.0.0', port=5000)

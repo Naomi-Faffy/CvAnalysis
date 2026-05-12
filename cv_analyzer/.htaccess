@@ -1,0 +1,10 @@
+PassengerEnabled On
+PassengerAppRoot /home/zhdconsulting/cv-analyzer
+PassengerBaseURI /
+PassengerPython /home/zhdconsulting/cv-analyzer/venv/bin/python3
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteRule ^(.*)$ passenger_wsgi.py/$1 [QSA,L]
+</IfModule>
