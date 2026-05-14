@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CV Analyzer - Graduate Trainee Recruitment</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+    <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.svg') }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -24,6 +26,7 @@
                 <li><a href="#upload" class="nav-link" data-tab="upload">Upload CV</a></li>
                 <li><a href="#candidates" class="nav-link" data-tab="candidates">Candidates</a></li>
                 <li><a href="#jobs" class="nav-link" data-tab="jobs">Jobs</a></li>
+                <li><a href="#active-job" class="nav-link" data-tab="active-job">Active Job</a></li>
                 <li><a href="#filters" class="nav-link" data-tab="filters">Search & Filter</a></li>
             </ul>
             <div class="sidebar-footer">
@@ -114,6 +117,11 @@
                     <div class="upload-area" id="dropZone">
                         <p>Drag and drop CV files here or click to select multiple files</p>
                         <input type="file" id="fileInput" accept=".pdf,.docx" multiple hidden>
+                        <div style="margin-top:8px; display:flex; gap:8px;">
+                            <button type="button" class="btn-secondary" id="selectFolderBtn">Select Folder</button>
+                            <small style="align-self:center; color:#666;">(Select a folder to upload all CVs inside)</small>
+                        </div>
+                        <input type="file" id="folderInput" webkitdirectory directory multiple hidden>
                     </div>
 
                     <div id="uploadStatus" class="upload-status" style="display: none;"></div>
@@ -133,7 +141,10 @@
             <!-- Candidates Tab -->
             <section id="candidates" class="tab-content">
                 <div class="card">
-                    <h3>All Candidates</h3>
+                    <div class="filter-actions" style="justify-content: space-between; align-items: center;">
+                        <h3 style="margin-bottom: 0;">All Candidates</h3>
+                        <button class="btn-secondary" onclick="downloadExcel()">Download All Candidates Excel</button>
+                    </div>
                     <div id="candidatesTable" class="table-container"></div>
                 </div>
             </section>
@@ -236,6 +247,45 @@
                         </div>
                         <div id="activeMatchesTable" class="table-container"></div>
                     </div>
+
+                    <div class="card">
+                        <h3>System Actions</h3>
+                        <p class="subtitle">Use these only when you want to remove job records or clear the full system state.</p>
+                        <div class="filter-actions">
+                            <button class="btn-danger" onclick="resetSystemData()">Reset All System Data</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Active Job Tab -->
+            <section id="active-job" class="tab-content">
+                <div class="card">
+                    <div class="filter-actions" style="justify-content: space-between; align-items: center;">
+                        <h3 style="margin-bottom: 0;">Active Job Analysis</h3>
+                        <div class="filter-actions">
+                            <button class="btn-secondary" onclick="loadActiveJobReport()">Refresh Analysis</button>
+                            <button class="btn-secondary" onclick="downloadActiveJobMatches()">Download Active Job Excel</button>
+                        </div>
+                    </div>
+                    <div id="activeJobAnalysisSummary" class="subtitle">No active job selected.</div>
+                </div>
+
+                <div class="dashboard-grid">
+                    <div class="card">
+                        <h3>Top 10 Ranked Candidates</h3>
+                        <div id="activeJobTopCandidates"></div>
+                    </div>
+
+                    <div class="card">
+                        <h3>Requirement Coverage</h3>
+                        <div id="activeJobKeywords" class="candidate-list"></div>
+                    </div>
+
+                    <div class="card">
+                        <h3>How the Score Works</h3>
+                        <div id="activeJobScoringNotes"></div>
+                    </div>
                 </div>
             </section>
 
@@ -300,6 +350,15 @@
                         <div class="filter-group">
                             <label for="minExperience">Min Experience (years)</label>
                             <input type="number" id="minExperience" min="0" max="50" step="1">
+                        </div>
+
+                        <div class="filter-group">
+                            <label for="driverLicenseFilter">Driver's License</label>
+                            <select id="driverLicenseFilter">
+                                <option value="">Any</option>
+                                <option value="true">Has License</option>
+                                <option value="false">No License</option>
+                            </select>
                         </div>
                     </div>
 

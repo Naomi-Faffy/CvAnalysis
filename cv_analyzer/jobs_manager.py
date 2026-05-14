@@ -202,3 +202,28 @@ class JobsManager:
             return {'success': True, 'job': job}
         except Exception as e:
             return {'success': False, 'error': str(e)}
+
+    def delete_job(self, job_id: str) -> Dict:
+        try:
+            df = self._load_dataframe()
+            if df.empty:
+                return {'success': False, 'error': 'No jobs found'}
+
+            target_mask = df['Job ID'].fillna('').astype(str) == str(job_id)
+            if not target_mask.any():
+                return {'success': False, 'error': 'Job not found'}
+
+            deleted_row = self._json_safe_records(df[target_mask].head(1))
+            deleted_job = deleted_row[0] if deleted_row else {}
+            active_value = pd.to_numeric(deleted_job.get('Is Active', 0), errors='coerce')
+            was_active = (pd.notna(active_value) and int(active_value) == 1) or str(deleted_job.get('Status', '')).lower() == 'active'
+
+            df = df[~target_mask].copy()
+            if not df.empty:
+                df['Status'] = df['Status'].fillna('Inactive')
+                df['Is Active'] = pd.to_numeric(df['Is Active'], errors='coerce').fillna(0).astype(int)
+            self._save_dataframe(df)
+
+            return {'success': True, 'job': deleted_job, 'was_active': was_active}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}

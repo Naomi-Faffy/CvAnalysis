@@ -6,6 +6,7 @@ const state = {
     jobs: [],
     activeJob: null,
     activeMatches: [],
+    activeJobReport: null,
     stats: {},
     charts: {}
 };
@@ -23,6 +24,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadCandidates();
     loadJobs();
     loadActiveJobMatches();
+    loadActiveJobReport();
 });
 
 function initNavigation() {
@@ -40,6 +42,10 @@ function initNavigation() {
             link.classList.add('active');
             document.getElementById(tabName).classList.add('active');
             document.getElementById('page-title').textContent = toTitleCase(tabName);
+
+            if (tabName === 'active-job') {
+                loadActiveJobReport();
+            }
         });
     });
 }
@@ -47,8 +53,30 @@ function initNavigation() {
 function initUploadArea() {
     const dropZone = document.getElementById('dropZone');
     const fileInput = document.getElementById('fileInput');
+    const folderInput = document.getElementById('folderInput');
+    const selectFolderBtn = document.getElementById('selectFolderBtn');
 
-    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('click', (event) => {
+        // Only trigger file input if the click is directly on dropZone, not on child elements like buttons
+        if (event.target === dropZone || event.target.tagName === 'P') {
+            fileInput.click();
+        }
+    });
+
+    if (selectFolderBtn && folderInput) {
+        selectFolderBtn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            folderInput.click();
+        });
+
+        folderInput.addEventListener('change', () => {
+            if (folderInput.files.length) {
+                // folderInput.files contains all files in the selected directory (and subdirectories)
+                uploadCVFiles(Array.from(folderInput.files));
+                folderInput.value = '';
+            }
+        });
+    }
 
     fileInput.addEventListener('change', () => {
         if (fileInput.files.length) {
@@ -181,6 +209,7 @@ function renderJobsBoard() {
         const activeAction = isActive
             ? '<button class="btn-secondary" disabled>Current Active Job</button>'
             : `<button class="btn-primary" onclick="activateJob('${encodeURIComponent(job['Job ID'] || '')}', event)">Set Active</button>`;
+        const deleteAction = `<button class="btn-danger" onclick="deleteJob('${encodeURIComponent(job['Job ID'] || '')}', event)">Delete Job</button>`;
 
         return `
             <div class="job-card" onclick="openJobModal('${encodeURIComponent(job['Job ID'] || '')}')">
@@ -204,6 +233,7 @@ function renderJobsBoard() {
                 </div>
                 <div class="job-detail-actions" style="margin-top: 10px;" onclick="event.stopPropagation()">
                     ${activeAction}
+                    ${deleteAction}
                 </div>
             </div>
         `;
@@ -228,9 +258,42 @@ async function activateJob(encodedJobId, event) {
         }
 
         showJobStatus(`Job activated. ${result.matched_candidates || 0} CV bank candidate(s) matched.`, false);
-        await Promise.all([loadJobs(), loadActiveJobMatches(), loadCandidates()]);
+        await Promise.all([loadJobs(), loadActiveJobMatches(), loadActiveJobReport(), loadCandidates()]);
+
+        const activeTab = document.querySelector('.nav-link[data-tab="active-job"]');
+        if (activeTab) {
+            activeTab.click();
+        }
     } catch (error) {
         showJobStatus(`Failed to activate job: ${error.message}`, true);
+    }
+}
+
+async function deleteJob(encodedJobId, event) {
+    if (event) {
+        event.stopPropagation();
+    }
+
+    const jobId = decodeURIComponent(encodedJobId);
+    if (!window.confirm('Delete this job? This cannot be undone.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
+            method: 'DELETE'
+        });
+        const result = await response.json();
+
+        if (!response.ok || !result.success) {
+            showJobStatus(result.error || 'Failed to delete job.', true);
+            return;
+        }
+
+        showJobStatus('Job deleted successfully.', false);
+        await Promise.all([loadJobs(), loadActiveJobMatches(), loadActiveJobReport(), loadCandidates()]);
+    } catch (error) {
+        showJobStatus(`Failed to delete job: ${error.message}`, true);
     }
 }
 
@@ -247,6 +310,136 @@ async function loadActiveJobMatches() {
         renderActiveJobMatches();
     } catch (error) {
         console.error('Failed to load active job matches:', error);
+    }
+}
+
+async function loadActiveJobReport() {
+    try {
+        const response = await fetch('/api/jobs/active/report');
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            return;
+        }
+
+        state.activeJobReport = result;
+        renderActiveJobReport();
+    } catch (error) {
+        console.error('Failed to load active job report:', error);
+    }
+}
+
+function renderActiveJobReport() {
+    const report = state.activeJobReport;
+    const summary = document.getElementById('activeJobAnalysisSummary');
+    const topCandidatesContainer = document.getElementById('activeJobTopCandidates');
+    const keywords = document.getElementById('activeJobKeywords');
+    const notes = document.getElementById('activeJobScoringNotes');
+
+    if (!summary || !topCandidatesContainer || !keywords || !notes) {
+        return;
+    }
+
+    if (!report || !report.job || !report.job['Job ID']) {
+        summary.textContent = 'No active job selected. Set one job as active to view ranking and analysis.';
+        topCandidatesContainer.innerHTML = '<div class="empty-state">No active job selected.</div>';
+        keywords.innerHTML = '<div class="empty-state">No active job selected.</div>';
+        notes.innerHTML = `
+            <ul style="margin-left: 18px; color: var(--ink-700);">
+                <li>Identity, address and contact details confirm the CV is complete.</li>
+                <li>Education, experience and skills drive the main score.</li>
+                <li>A master's degree can still rank below a bachelor's if the CV is weak on skills, experience, or evidence matching the job.</li>
+            </ul>
+        `;
+        return;
+    }
+
+    const job = report.job;
+    const totals = report.totals || {};
+    const matchedKeywords = report.matched_keywords || [];
+    const missingKeywords = report.missing_keywords || [];
+    const topCandidates = report.top_candidates || [];
+
+    summary.textContent = `Active job: ${job['Job Title'] || 'Untitled'} | ${totals.ranked_candidates || 0} CVs ranked | ${totals.qualified_pct || 0}% meet the job fit threshold.`;
+
+    const topCandidatesRows = topCandidates.length
+        ? topCandidates.slice(0, 10).map((candidate, index) => `
+            <div class="candidate-item" style="align-items: stretch; gap: 12px; flex-direction: column;">
+                <div style="display:flex; justify-content:space-between; gap: 12px; align-items:flex-start;">
+                    <div class="candidate-info" style="min-width: 0;">
+                        <div class="candidate-name">${index + 1}. ${escapeHtml(candidate.Name || 'N/A')}</div>
+                        <div class="candidate-email">${escapeHtml(candidate.Email || 'No email on file')}</div>
+                    </div>
+                    <button class="btn-primary btn-small" onclick="openCandidateModal('${encodeURIComponent(candidateIdentifier(candidate))}')">View</button>
+                </div>
+                <div style="display:flex; gap: 10px; flex-wrap: wrap;">
+                    <span class="job-pill">CV Score: ${Number(candidate['Final Score (%)'] || 0).toFixed(1)}%</span>
+                    <span class="job-pill">Match Score: ${Number(candidate['Match Score (%)'] || 0).toFixed(1)}%</span>
+                </div>
+            </div>
+        `).join('')
+        : '<div class="empty-state">No candidates to rank for this active job.</div>';
+
+    topCandidatesContainer.innerHTML = topCandidatesRows;
+
+    const matchedChips = matchedKeywords.length
+        ? matchedKeywords.map((keyword) => `<span class="job-pill">${escapeHtml(keyword)}</span>`).join('')
+        : '<div class="empty-state">No requirement terms were confidently matched.</div>';
+    const missingChips = missingKeywords.length
+        ? missingKeywords.map((keyword) => `<span class="job-pill" style="background: rgba(185,74,74,0.12); color: #923838; border-color: rgba(185,74,74,0.25);">${escapeHtml(keyword)}</span>`).join('')
+        : '<div class="empty-state">No missing requirement terms detected.</div>';
+
+    keywords.innerHTML = `
+        <div class="detail-section">
+            <h4>Matched Requirements</h4>
+            <div class="job-meta">${matchedChips}</div>
+        </div>
+        <div class="detail-section">
+            <h4>Missing Requirements</h4>
+            <div class="job-meta">${missingChips}</div>
+        </div>
+    `;
+
+    notes.innerHTML = `
+        <ul style="margin-left: 18px; color: var(--ink-700);">
+            <li><strong>Identity</strong>: name, email and phone completeness.</li>
+            <li><strong>Education</strong>: degree level, certifications, field of study and recency.</li>
+            <li><strong>Experience</strong>: years, role history and achievement signals.</li>
+            <li><strong>Skills</strong>: overlap with the job description and evidence in the CV.</li>
+            <li><strong>Important</strong>: this is a holistic score. A master's degree alone does not guarantee a higher rank if skills and experience are weaker.</li>
+        </ul>
+    `;
+}
+
+async function resetSystemData() {
+    if (!window.confirm('Reset all system data? This will delete all jobs, candidates, and uploaded files.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/admin/reset-system', {
+            method: 'POST'
+        });
+        const result = await response.json();
+
+        if (!response.ok || !result.success) {
+            alert(result.error || 'Failed to reset system data.');
+            return;
+        }
+
+        alert('System data reset successfully.');
+        state.candidates = [];
+        state.filteredCandidates = [];
+        state.topCandidates = [];
+        state.uploadResults = [];
+        state.jobs = [];
+        state.activeJob = null;
+        state.activeMatches = [];
+        state.activeJobReport = null;
+
+        await Promise.all([loadDashboard(), loadCandidates(), loadJobs(), loadActiveJobMatches(), loadActiveJobReport()]);
+        renderUploadResults();
+    } catch (error) {
+        alert(`Failed to reset system data: ${error.message}`);
     }
 }
 
@@ -275,15 +468,18 @@ function renderActiveJobMatches() {
         .map((candidate) => {
             const email = candidate['Email'] || '';
             const fullName = `${candidate['First Name'] || ''} ${candidate['Last Name'] || ''}`.trim();
+            const identifier = candidateIdentifier(candidate);
             const score = Number(candidate['Final Score (%)'] || 0).toFixed(1);
             const matchScore = Number(candidate['Match Score (%)'] || 0).toFixed(1);
             return `
                 <tr>
                     <td>${escapeHtml(fullName || 'N/A')}</td>
-                    <td>${escapeHtml(email)}</td>
+                    <td>${escapeHtml(email || 'No email on file')}</td>
                     <td>${score}%</td>
                     <td>${matchScore}%</td>
-                    <td><button class="btn-secondary" onclick="openCandidateModal('${encodeURIComponent(email)}')">View</button></td>
+                    <td>
+                        <button class="btn-primary btn-small" onclick="openCandidateModal('${encodeURIComponent(identifier)}')">View</button>
+                    </td>
                 </tr>
             `;
         })
@@ -612,7 +808,7 @@ async function loadCandidates(filters = {}) {
         }
 
         state.candidates = result.candidates || [];
-        renderCandidatesTable('candidatesTable', state.candidates, true);
+        renderCandidatesTable('candidatesTable', state.candidates, false);
 
         if (Object.keys(filters).length > 0) {
             state.filteredCandidates = result.candidates || [];
@@ -647,12 +843,13 @@ function renderTopCandidates() {
             const first = candidate['First Name'] || '';
             const last = candidate['Last Name'] || '';
             const email = candidate['Email'] || '';
+            const identifier = candidateIdentifier(candidate);
             const score = Number(candidate['Final Score (%)'] || 0);
             return `
-                <div class="candidate-item" onclick="openCandidateModal('${encodeURIComponent(email)}')">
+                <div class="candidate-item" onclick="openCandidateModal('${encodeURIComponent(identifier)}')">
                     <div class="candidate-info">
-                        <div class="candidate-name">#${index + 1} ${escapeHtml(`${first} ${last}`.trim())}</div>
-                        <div class="candidate-email">${escapeHtml(email)}</div>
+                        <div class="candidate-name">${index + 1}. ${escapeHtml(`${first} ${last}`.trim())}</div>
+                        <div class="candidate-email">${escapeHtml(email || 'No email on file')}</div>
                     </div>
                     <div class="candidate-score">${score.toFixed(1)}%</div>
                 </div>
@@ -754,16 +951,30 @@ function renderCandidatesTable(containerId, candidates, includeActions) {
         return;
     }
 
-    const headers = [
-        'Name', 'Email', 'Gender', 'Age', 'Location', 'Education', 'Experience', 'Skills', 'Final Score', 'Applied Job', 'Match'
-    ];
+    const isAllCandidatesView = containerId === 'candidatesTable';
+
+    const headers = isAllCandidatesView
+        ? ['Name', 'Email', 'Contact Number']
+        : ['Name', 'Email', 'Gender', 'Age', 'Location', 'Education', 'Experience', 'Skills', 'Final Score', 'Applied Job', 'Match'];
 
     const rows = candidates
         .map((candidate) => {
             const email = candidate['Email'] || '';
             const name = `${candidate['First Name'] || ''} ${candidate['Last Name'] || ''}`.trim();
+            const identifier = candidateIdentifier(candidate);
             const score = Number(candidate['Final Score (%)'] || 0);
             const badge = scoreClass(score);
+            const phone = candidate['Phone'] || '';
+
+            if (isAllCandidatesView) {
+                return `
+                    <tr>
+                        <td>${escapeHtml(name || 'N/A')}</td>
+                        <td>${escapeHtml(email || 'No email on file')}</td>
+                        <td>${escapeHtml(phone || '-')}</td>
+                    </tr>
+                `;
+            }
 
             return `
                 <tr>
@@ -778,9 +989,9 @@ function renderCandidatesTable(containerId, candidates, includeActions) {
                     <td><span class="score ${badge}">${score.toFixed(1)}%</span></td>
                     <td>${escapeHtml(candidate['Applied Job Title'] || '-')}</td>
                     <td>${Number(candidate['Match Score (%)'] || 0).toFixed(1)}%</td>
-                    ${includeActions ? `<td>
-                        <button class="btn-secondary" onclick="openCandidateModal('${encodeURIComponent(email)}')">View</button>
-                        <button class="btn-danger" onclick="deleteCandidate('${encodeURIComponent(email)}')">Delete</button>
+                    ${includeActions && !isAllCandidatesView ? `<td>
+                        <button class="btn-secondary" onclick="openCandidateModal('${encodeURIComponent(identifier)}')">View</button>
+                        <button class="btn-danger" onclick="deleteCandidate('${encodeURIComponent(identifier)}')">Delete</button>
                     </td>` : ''}
                 </tr>
             `;
@@ -792,7 +1003,7 @@ function renderCandidatesTable(containerId, candidates, includeActions) {
             <thead>
                 <tr>
                     ${headers.map((h) => `<th>${h}</th>`).join('')}
-                    ${includeActions ? '<th>Actions</th>' : ''}
+                            ${includeActions && !isAllCandidatesView ? '<th>Actions</th>' : ''}
                 </tr>
             </thead>
             <tbody>${rows}</tbody>
@@ -855,6 +1066,25 @@ async function openCandidateModal(encodedEmail) {
     }
 }
 
+function candidateIdentifier(candidate) {
+    const email = candidate['Email'] || '';
+    if (email) {
+        return email;
+    }
+
+    const candidateKey = candidate['Candidate Key'] || '';
+    if (candidateKey) {
+        return candidateKey;
+    }
+
+    const name = candidate.Name || `${candidate['First Name'] || ''} ${candidate['Last Name'] || ''}`.trim();
+    const phone = candidate['Phone'] || '';
+    if (name && phone) {
+        return `${name} ${phone}`.trim();
+    }
+    return name || phone || '';
+}
+
 function closeCandidateModal() {
     document.getElementById('candidateModal').classList.remove('show');
 }
@@ -898,7 +1128,8 @@ async function applyFilters() {
         city: valueOf('cityFilter'),
         education_level: valueOf('educationFilter'),
         skill: valueOf('skillFilter'),
-        min_experience: valueOf('minExperience')
+        min_experience: valueOf('minExperience'),
+        has_driver_license: valueOf('driverLicenseFilter')
     };
 
     await loadCandidates(filters);
@@ -914,7 +1145,8 @@ function resetFilters() {
         'cityFilter',
         'educationFilter',
         'skillFilter',
-        'minExperience'
+        'minExperience',
+        'driverLicenseFilter'
     ].forEach((id) => {
         const element = document.getElementById(id);
         if (element) {
@@ -1082,6 +1314,9 @@ window.resetFilters = resetFilters;
 window.exportFiltered = exportFiltered;
 window.downloadExcel = downloadExcel;
 window.downloadActiveJobMatches = downloadActiveJobMatches;
+window.loadActiveJobReport = loadActiveJobReport;
+window.deleteJob = deleteJob;
+window.resetSystemData = resetSystemData;
 window.openCandidateModal = openCandidateModal;
 window.closeCandidateModal = closeCandidateModal;
 window.deleteCandidate = deleteCandidate;

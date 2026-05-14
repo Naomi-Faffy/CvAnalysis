@@ -1,0 +1,9 @@
+email,base_final_score,job_final_score,job_fit_score,keyword_match_score,gap_penalty,gaps
+clara.masters@example.com,43.25,44.09,7.26,7.14,10,"[{""type"": ""Experience below expectation"", ""item"": ""1 years"", ""severity"": ""High""}]"
+dan.practitioner@example.com,44.25,45.69,18.12,28.57,0,[]
+emma.senior@example.com,46.25,47.69,14.75,14.29,0,[]
+frank.junior@example.com,37.75,38.95,2.57,0.0,10,"[{""type"": ""Experience below expectation"", ""item"": ""0 years"", ""severity"": ""High""}]"
+grace.achiever@example.com,44.25,45.93,11.69,7.14,0,[]
+henry.skillful@example.com,34.25,35.81,14.15,21.43,0,[]
+irene.soft@example.com,42.25,43.57,9.14,0.0,0,[]
+jack.missing@example.com,29.5,30.34,1.93,0.0,10,"[{""type"": ""Experience below expectation"", ""item"": ""2 years"", ""severity"": ""High""}]"

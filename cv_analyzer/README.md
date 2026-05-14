@@ -4,7 +4,7 @@ A lightweight web application for managing and analyzing Graduate Trainee applic
 
 - Upload CV files in PDF and DOCX (single or batch)
 - Extract candidate identity, contact, location, education, experience, and skills
-- Score candidates with weighted scoring logic
+- Score candidates with weighted scoring logic that can also evaluate against the active job
 - Store all records in `data/applicants.xlsx` (no database)
 - Visual dashboard with charts and top candidates
 - Search, filter, delete, and export candidate data
@@ -88,6 +88,14 @@ Weighted components:
 - Education Score
 - Experience Score
 - Skills Score
+
+When a job is active, uploads are also scored against that job so the ranking reflects the role requirements instead of only a generic CV-bank fit.
+
+The job-aware analysis adds:
+
+- semantic keyword expansion for common aliases such as `CI/CD`, `JS`, `Python`, `Docker`, and `Git`
+- gap severity labels for missing required or preferred skills
+- a separate `job_fit` score alongside the legacy `final_score`
 
 ## Notes
 

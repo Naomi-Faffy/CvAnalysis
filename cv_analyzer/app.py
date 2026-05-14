@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, jsonify, send_file
 from flask_cors import CORS
 import os
 import re
+import shutil
 from io import BytesIO
 from werkzeug.utils import secure_filename
 from cv_parser import CVParser
@@ -23,12 +24,13 @@ RUNTIME_BASE_DIR = BASE_DIR
 UPLOAD_FOLDER = os.path.join(RUNTIME_BASE_DIR, 'uploads')
 DATA_FOLDER = os.getenv('CV_ANALYZER_DATA_DIR', os.path.join(RUNTIME_BASE_DIR, 'data'))
 ALLOWED_EXTENSIONS = {'pdf', 'docx'}
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB per individual file
+MAX_BATCH_SIZE = 300 * 1024 * 1024  # 300MB for batch uploads (~20 CVs)
 APPLICANTS_FILE = os.path.join(DATA_FOLDER, 'applicants.xlsx')
 JOBS_FILE = os.path.join(DATA_FOLDER, 'jobs.xlsx')
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE
+app.config['MAX_CONTENT_LENGTH'] = MAX_BATCH_SIZE
 
 # Initialize components
 cv_parser = CVParser()
@@ -39,6 +41,11 @@ jobs_manager = JobsManager(os.path.join(DATA_FOLDER, 'jobs.xlsx'))
 # Ensure folders exist
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(DATA_FOLDER, exist_ok=True)
+
+try:
+    excel_manager.refresh_candidate_scores(scoring_system, jobs_manager)
+except Exception as exc:
+    print(f"Warning: could not refresh candidate scores on startup: {exc}")
 
 
 def get_effective_job(job_id: str = "") -> dict:
@@ -103,6 +110,171 @@ def build_job_assignment(candidate_data: dict, job: dict) -> dict:
         'match_source': 'Active Job'
     }
 
+
+def _clear_directory_contents(directory_path: str):
+    if not os.path.exists(directory_path):
+        return
+
+    for entry_name in os.listdir(directory_path):
+        entry_path = os.path.join(directory_path, entry_name)
+        try:
+            if os.path.isdir(entry_path):
+                shutil.rmtree(entry_path)
+            else:
+                os.remove(entry_path)
+        except Exception as exc:
+            print(f"Warning: could not remove {entry_path}: {exc}")
+
+
+def build_active_job_report(job: dict) -> dict:
+    def safe_value(value):
+        if pd.isna(value):
+            return ''
+        return value
+
+    if not job or not job.get('Job ID'):
+        return {
+            'success': True,
+            'job': {},
+            'totals': {
+                'ranked_candidates': 0,
+                'qualified_candidates': 0,
+                'excellent_candidates': 0,
+                'average_match_score': 0,
+                'average_coverage_score': 0,
+                'qualified_pct': 0,
+                'excellent_pct': 0,
+            },
+            'bands': {'Excellent': 0, 'Good': 0, 'Moderate': 0, 'Weak': 0, 'Poor': 0},
+            'matched_keywords': [],
+            'missing_keywords': [],
+            'top_candidates': [],
+            'requirement_keywords': [],
+        }
+
+    df = excel_manager._load_dataframe()
+    if df.empty:
+        return {
+            'success': True,
+            'job': job,
+            'totals': {
+                'ranked_candidates': 0,
+                'qualified_candidates': 0,
+                'excellent_candidates': 0,
+                'average_match_score': 0,
+                'average_coverage_score': 0,
+                'qualified_pct': 0,
+                'excellent_pct': 0,
+            },
+            'bands': {'Excellent': 0, 'Good': 0, 'Moderate': 0, 'Weak': 0, 'Poor': 0},
+            'matched_keywords': [],
+            'missing_keywords': [],
+            'top_candidates': [],
+            'requirement_keywords': [],
+        }
+
+    job_id = str(job.get('Job ID', '') or '').strip()
+    if 'Applied Job ID' in df.columns:
+        df = df[df['Applied Job ID'].fillna('').astype(str) == job_id].copy()
+
+    if df.empty:
+        return {
+            'success': True,
+            'job': job,
+            'totals': {
+                'ranked_candidates': 0,
+                'qualified_candidates': 0,
+                'excellent_candidates': 0,
+                'average_match_score': 0,
+                'average_coverage_score': 0,
+                'qualified_pct': 0,
+                'excellent_pct': 0,
+            },
+            'bands': {'Excellent': 0, 'Good': 0, 'Moderate': 0, 'Weak': 0, 'Poor': 0},
+            'matched_keywords': [],
+            'missing_keywords': [],
+            'top_candidates': [],
+            'requirement_keywords': [],
+        }
+
+    job_keywords = excel_manager._job_keywords(job)
+    title_terms = set(re.findall(r'\b[a-zA-Z][a-zA-Z0-9+.#/-]{2,}\b', str(job.get('Job Title', '')).lower()))
+    title_terms = {
+        term for term in title_terms
+        if term not in {'the', 'and', 'for', 'with', 'from', 'that', 'this', 'have', 'has', 'was', 'were', 'are', 'your', 'you'}
+    }
+
+    ranked_candidates = []
+    all_candidate_terms = set()
+    band_counts = {'Excellent': 0, 'Good': 0, 'Moderate': 0, 'Weak': 0, 'Poor': 0}
+
+    for _, row in df.iterrows():
+        candidate_terms = excel_manager._candidate_match_terms(row)
+        all_candidate_terms.update(candidate_terms)
+
+        keyword_hits = candidate_terms & job_keywords
+        keyword_score = (len(keyword_hits) / max(len(job_keywords), 1)) * 100 if job_keywords else 0
+        title_score = (len(candidate_terms & title_terms) / max(len(title_terms), 1)) * 100 if title_terms else 0
+        match_score = round((keyword_score * 0.75) + (title_score * 0.25), 2)
+        final_score_value = pd.to_numeric(row.get('Final Score (%)', 0), errors='coerce')
+        final_score = float(final_score_value) if pd.notna(final_score_value) else 0
+
+        if match_score >= 85:
+            band = 'Excellent'
+        elif match_score >= 70:
+            band = 'Good'
+        elif match_score >= 55:
+            band = 'Moderate'
+        elif match_score >= 40:
+            band = 'Weak'
+        else:
+            band = 'Poor'
+
+        band_counts[band] += 1
+        ranked_candidates.append({
+            'Applicant ID': safe_value(row.get('Applicant ID', '')),
+            'Candidate Key': safe_value(row.get('Candidate Key', '')),
+            'Name': f"{row.get('First Name', '')} {row.get('Last Name', '')}".strip(),
+            'Email': safe_value(row.get('Email', '')),
+            'Phone': safe_value(row.get('Phone', '')),
+            'Final Score (%)': round(final_score, 2),
+            'Match Score (%)': match_score,
+            'Coverage (%)': round(keyword_score, 2),
+            'Band': band,
+            'Applied Job ID': safe_value(row.get('Applied Job ID', '')),
+            'Applied Job Title': safe_value(row.get('Applied Job Title', '')),
+        })
+
+    ranked_candidates.sort(key=lambda item: (item['Match Score (%)'], item['Final Score (%)']), reverse=True)
+
+    total = len(ranked_candidates)
+    qualified_candidates = sum(1 for item in ranked_candidates if item['Match Score (%)'] >= 70)
+    excellent_candidates = sum(1 for item in ranked_candidates if item['Match Score (%)'] >= 85)
+    avg_match = round(sum(item['Match Score (%)'] for item in ranked_candidates) / total, 2) if total else 0
+    avg_coverage = round(sum(item['Coverage (%)'] for item in ranked_candidates) / total, 2) if total else 0
+
+    matched_keywords = sorted(job_keywords & all_candidate_terms)
+    missing_keywords = sorted(job_keywords - all_candidate_terms)
+
+    return {
+        'success': True,
+        'job': job,
+        'totals': {
+            'ranked_candidates': total,
+            'qualified_candidates': qualified_candidates,
+            'excellent_candidates': excellent_candidates,
+            'average_match_score': avg_match,
+            'average_coverage_score': avg_coverage,
+            'qualified_pct': round((qualified_candidates / max(total, 1)) * 100, 2),
+            'excellent_pct': round((excellent_candidates / max(total, 1)) * 100, 2),
+        },
+        'bands': band_counts,
+        'matched_keywords': matched_keywords[:50],
+        'missing_keywords': missing_keywords[:50],
+        'top_candidates': ranked_candidates[:10],
+        'requirement_keywords': sorted(job_keywords)[:50],
+    }
+
 def allowed_file(filename: str) -> bool:
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
@@ -130,27 +302,30 @@ def process_uploaded_file(file_obj, job_id: str = ''):
             should_delete_file = True
             return {'success': False, 'status': 400, 'error': f'Could not parse {filename}'}
 
-        if not candidate_data.get('email'):
+        if not (candidate_data.get('email') or candidate_data.get('first_name') or candidate_data.get('last_name') or candidate_data.get('phone')):
             should_delete_file = True
             return {
                 'success': False,
                 'status': 400,
-                'error': f'Email not found in {filename}. Email is required to prevent duplicates.'
+                'error': f'Could not identify a name or email in {filename}. A CV needs at least one identifier.'
             }
 
-        if excel_manager.candidate_exists(candidate_data['email']):
+        if excel_manager.candidate_exists(candidate_data):
             should_delete_file = True
+            display_name = f"{candidate_data.get('first_name', '')} {candidate_data.get('last_name', '')}".strip()
+            identifier = candidate_data.get('email') or display_name or candidate_data.get('phone', '')
             return {
                 'success': False,
                 'status': 409,
                 'duplicate': True,
-                'error': f"Candidate with email {candidate_data['email']} already exists"
+                'error': f"Candidate {identifier} already exists"
             }
 
-        scores = scoring_system.get_score_breakdown(candidate_data)
         # Business rule: when a job is active, all uploads are applications for that active job.
         active_job = jobs_manager.get_active_job() or {}
         job = active_job if active_job.get('Job ID') else get_effective_job(job_id)
+        # Compute scores with awareness of the job when available
+        scores = scoring_system.get_score_breakdown(candidate_data, job=job)
         assignment = build_job_assignment(candidate_data, job)
         success = excel_manager.add_candidate(candidate_data, scores, filename, assignment)
 
@@ -162,7 +337,7 @@ def process_uploaded_file(file_obj, job_id: str = ''):
             'success': True,
             'status': 200,
             'candidate': {
-                'id': candidate_data.get('email', ''),
+                'id': candidate_data.get('email') or f"{candidate_data.get('first_name', '')} {candidate_data.get('last_name', '')}".strip() or candidate_data.get('phone', ''),
                 'name': f"{candidate_data.get('first_name', '')} {candidate_data.get('last_name', '')}".strip(),
                 'email': candidate_data.get('email', ''),
                 'score': scores.get('final_score', 0),
@@ -234,6 +409,36 @@ def get_job(job_id):
         return jsonify({'error': 'Job not found'}), 404
     except Exception as e:
         print(f"Error in get_job: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/jobs/<job_id>', methods=['DELETE'])
+def delete_job(job_id):
+    try:
+        result = jobs_manager.delete_job(job_id)
+        if not result.get('success'):
+            return jsonify({'error': result.get('error', 'Failed to delete job')}), 400
+
+        deleted_job = result.get('job', {})
+        deleted_active = bool(result.get('was_active'))
+
+        if deleted_active:
+            remaining_jobs = jobs_manager.get_all_jobs()
+            if remaining_jobs:
+                next_job_id = remaining_jobs[0].get('Job ID', '')
+                if next_job_id:
+                    activation_result = jobs_manager.set_active_job(next_job_id)
+                    if activation_result.get('success'):
+                        excel_manager.assign_candidates_to_job(activation_result.get('job', {}))
+
+        return jsonify({
+            'success': True,
+            'message': 'Job deleted successfully',
+            'job': deleted_job,
+            'deleted_active': deleted_active,
+        }), 200
+    except Exception as e:
+        print(f"Error in delete_job: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -335,6 +540,17 @@ def download_active_job_matches():
     except Exception as e:
         print(f"Error in download_active_job_matches: {e}")
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/jobs/active/report', methods=['GET'])
+def get_active_job_report():
+    try:
+        job = jobs_manager.get_active_job()
+        report = build_active_job_report(job)
+        return jsonify(report), 200
+    except Exception as e:
+        print(f"Error in get_active_job_report: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/upload-cv', methods=['POST'])
 def upload_cv():
@@ -443,6 +659,8 @@ def get_candidates():
             filters['search'] = request.args.get('search')
         if request.args.get('min_experience'):
             filters['min_experience'] = int(request.args.get('min_experience'))
+        if request.args.get('has_driver_license'):
+            filters['has_driver_license'] = request.args.get('has_driver_license')
         if request.args.get('applied_job_id'):
             filters['applied_job_id'] = request.args.get('applied_job_id')
 
@@ -457,11 +675,11 @@ def get_candidates():
         print(f"Error in get_candidates: {e}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/candidate/<email>', methods=['GET'])
-def get_candidate_detail(email):
+@app.route('/api/candidate/<path:identifier>', methods=['GET'])
+def get_candidate_detail(identifier):
     """Get detailed information about a specific candidate"""
     try:
-        candidate = excel_manager.get_candidate_by_email(email)
+        candidate = excel_manager.get_candidate_by_email(identifier)
         
         if candidate:
             return jsonify({
@@ -474,11 +692,11 @@ def get_candidate_detail(email):
         print(f"Error in get_candidate_detail: {e}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/candidate/<email>', methods=['DELETE'])
-def delete_candidate(email):
+@app.route('/api/candidate/<path:identifier>', methods=['DELETE'])
+def delete_candidate(identifier):
     """Delete a candidate"""
     try:
-        success = excel_manager.delete_candidate(email)
+        success = excel_manager.delete_candidate(identifier)
         
         if success:
             return jsonify({
@@ -598,9 +816,71 @@ def debug_candidates():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
+@app.route('/api/admin/reset-system', methods=['POST'])
+def reset_system_data():
+    try:
+        _clear_directory_contents(UPLOAD_FOLDER)
+
+        # Recreate empty data stores
+        if os.path.exists(APPLICANTS_FILE):
+            os.remove(APPLICANTS_FILE)
+        if os.path.exists(JOBS_FILE):
+            os.remove(JOBS_FILE)
+
+        excel_manager.ensure_file_exists()
+        jobs_manager.ensure_file_exists()
+
+        return jsonify({
+            'success': True,
+            'message': 'All system data has been reset successfully'
+        }), 200
+    except Exception as e:
+        print(f"Error in reset_system_data: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/debug/candidate-count', methods=['GET'])
+def debug_candidate_count():
+    """Detailed candidate count breakdown to verify all candidates are being counted."""
+    try:
+        import pandas as pd
+        # Raw load directly
+        df = pd.read_excel(APPLICANTS_FILE) if os.path.exists(APPLICANTS_FILE) else pd.DataFrame()
+        raw_count = len(df)
+        
+        # Via excel manager
+        all_candidates = excel_manager.get_all_candidates()
+        manager_count = len(all_candidates)
+        
+        # Via statistics
+        stats = excel_manager.get_statistics()
+        stats_count = stats.get('total_applicants', 0)
+        
+        # Count by score ranges
+        if 'Final Score (%)' in df.columns:
+            df['Final Score (%)'] = pd.to_numeric(df['Final Score (%)'], errors='coerce').fillna(0)
+            above_80 = int((df['Final Score (%)'] >= 80).sum())
+            below_80 = int((df['Final Score (%)'] < 80).sum())
+        else:
+            above_80 = 0
+            below_80 = raw_count
+        
+        return jsonify({
+            'success': True,
+            'counts': {
+                'raw_excel_rows': raw_count,
+                'manager_get_all': manager_count,
+                'statistics_total': stats_count,
+                'above_80_percent': above_80,
+                'below_80_percent': below_80
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.errorhandler(413)
 def request_entity_too_large(error):
-    return jsonify({'error': 'File too large. Maximum size is 10MB'}), 413
+    return jsonify({'error': 'Upload too large. Maximum batch size is 300MB (supports ~20 CVs per upload)'}), 413
 
 
 if __name__ == '__main__':

@@ -69,6 +69,37 @@ class CVParser:
         self.institution_keywords = [
             'university', 'college', 'polytechnic', 'institute', 'school of', 'academy'
         ]
+        self.section_aliases = {
+            'contact & identity': 'contact',
+            'contact': 'contact',
+            'personal details': 'contact',
+            'profile': 'summary',
+            'professional summary': 'summary',
+            'summary': 'summary',
+            'objective': 'summary',
+            'work experience': 'experience',
+            'experience': 'experience',
+            'employment history': 'experience',
+            'professional experience': 'experience',
+            'education': 'education',
+            'academic background': 'education',
+            'skills': 'skills',
+            'technical skills': 'skills',
+            'core skills': 'skills',
+            'certifications': 'certifications',
+            'certificates': 'certifications',
+            'projects': 'projects',
+            'personal projects': 'projects',
+            'portfolio': 'projects',
+            'achievements': 'achievements',
+            'awards': 'achievements',
+            'publications': 'publications',
+            'volunteer': 'volunteer',
+            'volunteering': 'volunteer',
+            'references': 'references',
+            'additional information': 'other',
+        }
+        self.section_header_pattern = re.compile(r'^(?:[A-Z][A-Z &/\-]{2,}|[A-Z][A-Za-z &/\-]{2,}:?)$')
 
     def extract_from_pdf(self, file_path: str) -> str:
         """Extract text from PDF file"""
@@ -76,7 +107,12 @@ class CVParser:
         try:
             with pdfplumber.open(file_path) as pdf:
                 for page in pdf.pages:
-                    text += page.extract_text() or ""
+                    page_text = page.extract_text() or ""
+                    if not page_text.strip():
+                        # Fallback for PDFs where regular text extraction fails.
+                        words = page.extract_words() or []
+                        page_text = " ".join(w.get('text', '') for w in words if w.get('text'))
+                    text += page_text + "\n"
         except Exception as e:
             print(f"Error extracting PDF: {e}")
         return text
@@ -98,11 +134,254 @@ class CVParser:
         normalized = re.sub(r'\t+', ' ', normalized)
         return normalized.strip()
 
+    def _split_lines(self, text: str) -> List[str]:
+        return [line.strip() for line in self._clean_text(text).split('\n')]
+
+    def _normalize_header(self, text: str) -> str:
+        header = re.sub(r'[:\-–—]+$', '', str(text or '').strip()).lower()
+        header = re.sub(r'\s+', ' ', header)
+        return header
+
+    def _classify_section(self, header: str) -> str:
+        header_norm = self._normalize_header(header)
+        if header_norm in self.section_aliases:
+            return self.section_aliases[header_norm]
+        for alias, canonical in self.section_aliases.items():
+            if alias in header_norm:
+                return canonical
+        return 'other'
+
+    def _is_section_header(self, line: str) -> bool:
+        line = str(line or '').strip()
+        if not line:
+            return False
+        if len(line) > 60:
+            return False
+        if ':' in line and len(line.split()) <= 6:
+            return True
+        return bool(self.section_header_pattern.match(line))
+
+    def _detect_sections(self, text: str) -> Dict[str, List[str]]:
+        lines = self._split_lines(text)
+        sections: Dict[str, List[str]] = {'preamble': []}
+        current = 'preamble'
+        sections[current] = []
+
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            if self._is_section_header(line):
+                current = self._classify_section(line)
+                sections.setdefault(current, [])
+                continue
+
+            sections.setdefault(current, []).append(line)
+
+        return sections
+
+    def _join_lines(self, lines: List[str]) -> str:
+        return '\n'.join([line for line in lines if line]).strip()
+
+    def _extract_section_text(self, sections: Dict[str, List[str]], section_name: str) -> str:
+        return self._join_lines(sections.get(section_name, []))
+
+    def _extract_links(self, text: str) -> Dict[str, List[str]]:
+        text = self._normalize_obfuscation(text)
+        urls = re.findall(r'https?://[^\s)\]\}>"\']+', text, flags=re.IGNORECASE)
+        linkedin = [u for u in urls if 'linkedin.com' in u.lower()]
+        github = [u for u in urls if 'github.com' in u.lower()]
+        portfolio = [u for u in urls if u not in linkedin and u not in github]
+        return {
+            'linkedin': sorted(set(linkedin)),
+            'github': sorted(set(github)),
+            'portfolio': sorted(set(portfolio)),
+        }
+
+    def _extract_summary_text(self, sections: Dict[str, List[str]]) -> str:
+        summary = self._extract_section_text(sections, 'summary')
+        if summary:
+            return summary
+        preamble = self._join_lines(sections.get('preamble', [])[:8])
+        return preamble
+
+    def _extract_certifications(self, sections: Dict[str, List[str]], text: str) -> List[str]:
+        cert_text = self._extract_section_text(sections, 'certifications')
+        candidates = []
+        source = cert_text or text
+        for line in self._split_lines(source):
+            if any(keyword in line.lower() for keyword in ['cert', 'certificate', 'certification', 'aws', 'pmp', 'cfa', 'cpa', 'comptia', 'azure', 'google cloud', 'scrum']):
+                cleaned = re.sub(r'^[-•*\u2022\s]+', '', line).strip()
+                if cleaned and cleaned not in candidates:
+                    candidates.append(cleaned)
+        return candidates[:10]
+
+    def _extract_projects(self, sections: Dict[str, List[str]], text: str) -> List[str]:
+        project_text = self._extract_section_text(sections, 'projects')
+        candidates = []
+        source = project_text or text
+        for line in self._split_lines(source):
+            if len(line) < 3:
+                continue
+            if any(keyword in line.lower() for keyword in ['project', 'built', 'developed', 'created', 'portfolio', 'github']):
+                cleaned = re.sub(r'^[-•*\u2022\s]+', '', line).strip()
+                if cleaned and cleaned not in candidates:
+                    candidates.append(cleaned)
+        return candidates[:10]
+
+    def _extract_experience_items(self, sections: Dict[str, List[str]], text: str) -> List[Dict]:
+        experience_text = self._extract_section_text(sections, 'experience') or text
+        lines = self._split_lines(experience_text)
+        roles: List[Dict] = []
+        current_role = None
+
+        title_pattern = re.compile(
+            r'(?P<title>[A-Z][A-Za-z0-9+\-/&()., ]{2,80}?)\s*(?:\||-|,| at )\s*(?P<employer>[A-Z][A-Za-z0-9&()., ]{2,80})',
+            re.IGNORECASE,
+        )
+        date_pattern = re.compile(r'(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s*)?(?:19|20)\d{2}\s*(?:-|–|to|through|present|current)\s*(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s*)?(?:19|20)\d{2}|(?:present|current)', re.IGNORECASE)
+
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            is_bullet = line.startswith(('-', '•', '*', '\u2022'))
+            title_match = title_pattern.search(line)
+
+            if title_match and not is_bullet:
+                if current_role:
+                    roles.append(current_role)
+                current_role = {
+                    'job_title': title_match.group('title').strip(),
+                    'employer': title_match.group('employer').strip(),
+                    'employment_dates': '',
+                    'employment_type': '',
+                    'location': '',
+                    'responsibilities': [],
+                    'achievements': [],
+                    'raw_lines': [line],
+                }
+                continue
+
+            if current_role is None and any(keyword in line.lower() for keyword in ['manager', 'developer', 'engineer', 'analyst', 'lead', 'consultant', 'intern', 'specialist', 'assistant']):
+                current_role = {
+                    'job_title': line,
+                    'employer': '',
+                    'employment_dates': '',
+                    'employment_type': '',
+                    'location': '',
+                    'responsibilities': [],
+                    'achievements': [],
+                    'raw_lines': [line],
+                }
+                continue
+
+            if current_role is None:
+                continue
+
+            current_role['raw_lines'].append(line)
+            if date_pattern.search(line) and not current_role['employment_dates']:
+                current_role['employment_dates'] = line
+
+            if any(prefix in line.lower() for prefix in ['remote', 'hybrid', 'onsite', 'on-site']):
+                current_role['location'] = line
+
+            if is_bullet or line.endswith('.'):
+                target = 'achievements' if any(metric in line for metric in ['%', '$', 'x', 'grew', 'reduced', 'increased', 'improved', 'saved', 'led', 'delivered']) else 'responsibilities'
+                current_role[target].append(re.sub(r'^[-•*\u2022\s]+', '', line).strip())
+
+        if current_role:
+            roles.append(current_role)
+
+        return roles[:12]
+
+    def _extract_education_items(self, sections: Dict[str, List[str]], text: str) -> List[Dict]:
+        education_text = self._extract_section_text(sections, 'education') or text
+        items: List[Dict] = []
+        lines = self._split_lines(education_text)
+        year_pattern = re.compile(r'(19|20)\d{2}')
+
+        current_item = None
+        for line in lines:
+            if not line:
+                continue
+            if any(k in line.lower() for k in ['bsc', 'bachelor', 'master', 'msc', 'mba', 'diploma', 'certificate', 'phd', 'degree', 'associate', 'honours', 'honors']):
+                if current_item:
+                    items.append(current_item)
+                current_item = {
+                    'qualification': line.strip(),
+                    'institution': '',
+                    'field_of_study': '',
+                    'graduation_year': year_pattern.search(line).group(0) if year_pattern.search(line) else '',
+                    'raw_lines': [line],
+                }
+                continue
+            if current_item is not None:
+                current_item['raw_lines'].append(line)
+                if not current_item['institution'] and any(keyword in line.lower() for keyword in self.institution_keywords):
+                    current_item['institution'] = line.strip()
+                if not current_item['field_of_study'] and any(keyword in line.lower() for keyword in ['computer science', 'finance', 'engineering', 'information technology', 'business', 'accounting', 'marketing', 'law', 'nursing', 'medicine']):
+                    current_item['field_of_study'] = line.strip()
+
+        if current_item:
+            items.append(current_item)
+
+        return items[:10]
+
+    def _normalize_obfuscation(self, text: str) -> str:
+        """Normalize common obfuscations like ' at ', '[at]', ' dot ' etc."""
+        if not text:
+            return text
+        s = text
+        # Common replacements
+        s = s.replace('\uFF20', '@')  # fullwidth at
+        s = s.replace('＠', '@')
+        # various fullwidth/ideographic dots -> ascii dot
+        for uni_dot in ['。', '．', '｡', '﹒']:
+            s = s.replace(uni_dot, '.')
+        # replace common obfuscations like ' [at] ', '(at)', ' at ' -> '@'
+        s = re.sub(r'\s*\[?\(?\s*at\s*\)?\]?\s*', '@', s, flags=re.IGNORECASE)
+        # replace common obfuscations like ' dot ', '(dot)', '[dot]' -> '.'
+        s = re.sub(r'\s*\[?\(?\s*dot\s*\)?\]?\s*', '.', s, flags=re.IGNORECASE)
+        # remove spaces around @ and dots that often break regex
+        s = re.sub(r'\s*@\s*', '@', s)
+        s = re.sub(r'\s*\.\s*', '.', s)
+        return s
+
     def extract_email(self, text: str) -> str:
-        """Extract email address"""
-        pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
-        matches = re.findall(pattern, text)
-        return matches[0].lower() if matches else ""
+        """Extract email address using normalization, labeled-field search and fallbacks."""
+        if not text:
+            return ""
+
+        norm = self._normalize_obfuscation(text)
+
+        # Prefer labeled occurrences (Email:, E-mail:, Contact:)
+        labeled_pattern = re.compile(r'(?:email|e-mail|contact|mailto)[:\s]*([^\n\r]+)', re.IGNORECASE)
+        for m in labeled_pattern.finditer(norm):
+            candidate = m.group(1).strip()
+            # strip common trailing punctuation
+            candidate = candidate.strip(' ,;:\t"\'')
+            email = re.search(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}', candidate)
+            if email:
+                return email.group(0).lower()
+
+        # Look for inline emails in the whole text
+        email_re = re.compile(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}', re.UNICODE)
+        m = email_re.search(norm)
+        if m:
+            return m.group(0).lower()
+
+        # Heuristic fallback: patterns like 'user at domain dot com'
+        fuzzy = re.sub(r'[^a-zA-Z0-9@._%+\s-]', ' ', norm)
+        fuzzy = re.sub(r'\s{2,}', ' ', fuzzy)
+        fuzzy_match = re.search(r'([A-Za-z0-9._%+-]+)\s+at\s+([A-Za-z0-9.-]+)\s+dot\s+([A-Za-z]{2,})', fuzzy, re.IGNORECASE)
+        if fuzzy_match:
+            return f"{fuzzy_match.group(1).lower()}@{fuzzy_match.group(2).lower()}.{fuzzy_match.group(3).lower()}"
+
+        # No email found
+        return ""
 
     def extract_phone(self, text: str) -> str:
         """Extract phone number"""
@@ -122,17 +401,28 @@ class CVParser:
         """Extract first and last names"""
         first_name = ""
         last_name = ""
-        
+
         lines = text.split('\n')
-        for line in lines[:5]:  # Check first 5 lines
-            line = line.strip()
-            if "@" in line or any(ch.isdigit() for ch in line):
+        blocked_tokens = {
+            'curriculum', 'vitae', 'resume', 'cv', 'contact', 'email', 'phone',
+            'summary', 'profile', 'objective', 'address', 'linkedin', 'github'
+        }
+        for line in lines[:20]:
+            line = re.sub(r'\s+', ' ', line or '').strip()
+            if not line:
                 continue
-            if len(line) > 3 and len(line.split()) >= 2:
-                words = line.split()
-                first_name = words[0]
-                last_name = words[1]
-                break
+            lowered = line.lower()
+            if "@" in lowered or any(ch.isdigit() for ch in lowered):
+                continue
+            words = [w for w in re.findall(r"[A-Za-z][A-Za-z'\-]{1,30}", line) if len(w) > 1]
+            if len(words) < 2:
+                continue
+            if words[0].lower() in blocked_tokens or words[1].lower() in blocked_tokens:
+                continue
+
+            first_name = words[0]
+            last_name = words[1]
+            break
 
         if self.nlp and not first_name:
             doc = self.nlp(text[:1500])
@@ -143,12 +433,23 @@ class CVParser:
                         first_name = parts[0]
                         last_name = parts[1]
                         break
-        
+
         # Clean up
         first_name = re.sub(r'[^a-zA-Z]', '', first_name).strip()
         last_name = re.sub(r'[^a-zA-Z]', '', last_name).strip()
-        
+
         return first_name, last_name
+
+    def _name_from_email(self, email: str) -> Tuple[str, str]:
+        if not email or '@' not in email:
+            return "", ""
+        local = email.split('@', 1)[0]
+        parts = [p for p in re.split(r'[^a-zA-Z]+', local) if p and len(p) > 1]
+        if len(parts) >= 2:
+            return parts[0].title(), parts[1].title()
+        if len(parts) == 1:
+            return parts[0].title(), ""
+        return "", ""
 
     def extract_gender(self, text: str) -> str:
         """Infer gender from pronouns or titles"""
@@ -289,7 +590,13 @@ class CVParser:
                     experience['years'] = max(0, years_span)
                 except Exception:
                     pass
-        
+
+        # Guard against OCR noise generating unrealistic values.
+        if experience['years'] < 0:
+            experience['years'] = 0
+        if experience['years'] > 45:
+            experience['years'] = 0
+
         # Look for job titles
         job_keywords = ['developer', 'engineer', 'manager', 'analyst', 'designer', 
                        'consultant', 'architect', 'lead', 'senior', 'junior', 'technician', 'specialist']
@@ -326,7 +633,23 @@ class CVParser:
                 found_skills.add(norm)
 
         return sorted(found_skills)
-
+    def extract_driver_license(self, text: str) -> bool:
+        """Check if CV mentions driver's license or driving experience"""
+        driver_patterns = [
+            r"\bdriver'?s?\s+license\b",
+            r"\bdriver'?s?\s+permit\b",
+            r"\bvalid\s+driver'?s?\s+license\b",
+            r"\bdriving\s+license\b",
+            r"\bPDP\b",  # Professional Driver's Permit
+            r"\bclass\s+[a-z]\s+driver",
+            r"\blicensed\s+driver\b"
+        ]
+        
+        for pattern in driver_patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                return True
+        
+        return False
     def extract_age_or_dob(self, text: str) -> str:
         """Extract age or date of birth"""
         date_patterns = [
@@ -381,19 +704,44 @@ class CVParser:
             return {}
 
         text = self._clean_text(text)
-        
-        first_name, last_name = self.extract_names(text)
-        email = self.extract_email(text)
-        phone = self.extract_phone(text)
+        sections = self._detect_sections(text)
+
+        contact_text = self._extract_section_text(sections, 'contact') or text[:2000]
+        contact_plus_text = f"{contact_text}\n{text}"
+        summary = self._extract_summary_text(sections)
+        links = self._extract_links(text)
+        certifications = self._extract_certifications(sections, text)
+        projects = self._extract_projects(sections, text)
+        experience_items = self._extract_experience_items(sections, text)
+        education_items = self._extract_education_items(sections, text)
+
+        first_name, last_name = self.extract_names(contact_plus_text)
+        email = self.extract_email(contact_plus_text)
+        phone = self.extract_phone(contact_plus_text)
+        if (not first_name or not last_name) and email:
+            email_first, email_last = self._name_from_email(email)
+            if not first_name:
+                first_name = email_first
+            if not last_name:
+                last_name = email_last
         gender = self.extract_gender(text)
-        city, country = self.extract_location(text)
+        city, country = self.extract_location(contact_plus_text)
         age_dob = self.extract_age_or_dob(text)
         age = self._calculate_age(str(age_dob))
-        education = self.extract_education(text)
+        education = education_items or self.extract_education(text)
         education_level = self.infer_education_level(education)
         experience = self.extract_experience(text)
         skills = self.extract_skills(text)
-        
+        has_driver_license = self.extract_driver_license(text)
+
+        confidence = {
+            'contact': 'HIGH' if email or phone or (first_name and last_name) else 'MEDIUM',
+            'summary': 'HIGH' if summary else 'LOW',
+            'experience': 'HIGH' if experience_items else 'MEDIUM',
+            'education': 'HIGH' if education_items else 'MEDIUM',
+            'skills': 'HIGH' if skills else 'LOW',
+        }
+
         return {
             'first_name': first_name,
             'last_name': last_name,
@@ -408,5 +756,13 @@ class CVParser:
             'education_level': education_level,
             'experience': experience,
             'skills': skills,
+            'has_driver_license': has_driver_license,
+            'summary': summary,
+            'links': links,
+            'certifications': certifications,
+            'projects': projects,
+            'experience_entries': experience_items,
+            'sections': sections,
+            'confidence': confidence,
             'raw_text': text
         }

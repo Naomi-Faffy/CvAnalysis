@@ -137,6 +137,7 @@ class ExcelManager:
     def get_columns(self) -> List[str]:
         return [
             'Applicant ID',
+            'Candidate Key',
             'First Name',
             'Last Name',
             'Email',
@@ -151,6 +152,7 @@ class ExcelManager:
             'Years of Experience',
             'Current Role',
             'Skills',
+            'Has Driver\'s License',
             *self.skill_columns,
             'Identity Score',
             'Address Score',
@@ -190,13 +192,15 @@ class ExcelManager:
 
     def candidate_exists(self, email: str) -> bool:
         try:
-            if not email:
+            if isinstance(email, dict):
+                identifier = self._candidate_key(email)
+            else:
+                identifier = str(email or '').strip()
+
+            if not identifier:
                 return False
             df = self._load_dataframe()
-            if 'Email' not in df.columns:
-                return False
-            normalized_emails = df['Email'].fillna('').astype(str).str.lower().str.strip().values
-            return email.lower().strip() in normalized_emails
+            return bool(self._match_identifier_mask(df, identifier).any())
         except Exception:
             return False
 
@@ -212,9 +216,11 @@ class ExcelManager:
         education_items = candidate_data.get('education', []) or []
         education_str = "; ".join(item.get('qualification', '').strip() for item in education_items if item.get('qualification'))
         job_assignment = job_assignment or {}
+        candidate_key = self._candidate_key(candidate_data)
 
         row = {
             'Applicant ID': f"APP-{str(uuid.uuid4())[:8].upper()}",
+            'Candidate Key': candidate_key,
             'First Name': candidate_data.get('first_name', ''),
             'Last Name': candidate_data.get('last_name', ''),
             'Email': str(candidate_data.get('email', '')).strip().lower(),
@@ -229,6 +235,7 @@ class ExcelManager:
             'Years of Experience': candidate_data.get('experience', {}).get('years', 0),
             'Current Role': candidate_data.get('experience', {}).get('current_role', ''),
             'Skills': ", ".join(skills),
+            'Has Driver\'s License': 1 if candidate_data.get('has_driver_license', False) else 0,
             'Identity Score': scores.get('identity', 0),
             'Address Score': scores.get('address', 0),
             'Education Score': scores.get('education', 0),
@@ -261,9 +268,7 @@ class ExcelManager:
     ) -> bool:
         try:
             df = self._load_dataframe()
-            email = str(candidate_data.get('email', '')).strip().lower()
-
-            if email and self.candidate_exists(email):
+            if self.candidate_exists(candidate_data):
                 return False
 
             new_row = self._new_candidate_row(candidate_data, scores, file_name, job_assignment)
@@ -320,6 +325,113 @@ class ExcelManager:
         extracted = series.fillna('').astype(str).str.extract(r'(\d+(?:\.\d+)?)')[0]
         return pd.to_numeric(extracted, errors='coerce').fillna(0)
 
+    def _normalize_identifier(self, value: str) -> str:
+        return re.sub(r'[^a-z0-9]+', '', str(value or '').strip().lower())
+
+    def _candidate_key(self, candidate_data: Dict) -> str:
+        email = str(candidate_data.get('email', '') or '').strip().lower()
+        if email:
+            return email
+
+        first_name = str(candidate_data.get('first_name', '') or '').strip().lower()
+        last_name = str(candidate_data.get('last_name', '') or '').strip().lower()
+        phone = self._normalize_identifier(candidate_data.get('phone', ''))
+        full_name = self._normalize_identifier(f'{first_name} {last_name}'.strip())
+
+        if full_name and phone:
+            return f'{full_name}:{phone[-6:]}'
+        if full_name:
+            return full_name
+        if phone:
+            return f'phone:{phone}'
+        return ''
+
+    def _match_identifier_mask(self, df: pd.DataFrame, identifier: str) -> pd.Series:
+        normalized = self._normalize_identifier(identifier)
+        if not normalized:
+            return pd.Series([False] * len(df), index=df.index)
+
+        email_series = df.get('Email', pd.Series(index=df.index, dtype=str)).fillna('').astype(str).str.lower().str.replace(r'[^a-z0-9]+', '', regex=True)
+        key_series = df.get('Candidate Key', pd.Series(index=df.index, dtype=str)).fillna('').astype(str).str.lower().str.replace(r'[^a-z0-9]+', '', regex=True)
+        full_name_series = (
+            df.get('First Name', pd.Series(index=df.index, dtype=str)).fillna('').astype(str).str.strip() + ' ' +
+            df.get('Last Name', pd.Series(index=df.index, dtype=str)).fillna('').astype(str).str.strip()
+        ).str.lower().str.replace(r'[^a-z0-9]+', '', regex=True)
+        phone_series = df.get('Phone', pd.Series(index=df.index, dtype=str)).fillna('').astype(str).str.lower().str.replace(r'[^a-z0-9]+', '', regex=True)
+
+        return (
+            (email_series == normalized)
+            | (key_series == normalized)
+            | (full_name_series == normalized)
+            | full_name_series.str.contains(normalized, na=False)
+            | phone_series.eq(normalized)
+        )
+
+    def _candidate_profile_from_row(self, row: pd.Series) -> Dict:
+        education_items = []
+        for item in str(row.get('Education', '') or '').split(';'):
+            item = item.strip()
+            if item:
+                education_items.append({'qualification': item})
+
+        skills = [skill.strip() for skill in str(row.get('Skills', '') or '').split(',') if skill.strip()]
+        years = self._experience_years_series(pd.Series([row.get('Years of Experience', 0)])).iloc[0]
+
+        return {
+            'first_name': row.get('First Name', ''),
+            'last_name': row.get('Last Name', ''),
+            'email': row.get('Email', ''),
+            'phone': row.get('Phone', ''),
+            'city': row.get('City', ''),
+            'country': row.get('Country', ''),
+            'education_level': row.get('Education Level', 'Unknown'),
+            'education': education_items,
+            'experience': {
+                'years': int(years) if pd.notna(years) else 0,
+                'current_role': row.get('Current Role', ''),
+            },
+            'skills': skills,
+            'raw_text': ' '.join([
+                str(row.get('Profile Keywords', '') or ''),
+                str(row.get('Skills', '') or ''),
+                str(row.get('Education', '') or ''),
+                str(row.get('Current Role', '') or ''),
+                str(row.get('Applied Job Title', '') or ''),
+            ]),
+        }
+
+    def refresh_candidate_scores(self, scoring_system, jobs_manager=None) -> int:
+        try:
+            df = self._load_dataframe()
+            if df.empty:
+                return 0
+
+            updated_rows = 0
+            for idx, row in df.iterrows():
+                candidate = self._candidate_profile_from_row(row)
+                job = {}
+
+                applied_job_id = str(row.get('Applied Job ID', '') or '').strip()
+                if jobs_manager and applied_job_id:
+                    job = jobs_manager.get_job_by_id(applied_job_id) or {}
+
+                scores = scoring_system.get_score_breakdown(candidate, job=job or None)
+                df.at[idx, 'Identity Score'] = scores.get('identity', 0)
+                df.at[idx, 'Address Score'] = scores.get('address', 0)
+                df.at[idx, 'Education Score'] = scores.get('education', 0)
+                df.at[idx, 'Experience Score'] = scores.get('experience', 0)
+                df.at[idx, 'Skills Score'] = scores.get('skills', 0)
+                df.at[idx, 'Total Candidate Score'] = scores.get('total_candidate_score', 0)
+                df.at[idx, 'Max Score'] = scores.get('max_score', 100)
+                df.at[idx, 'Final Score (%)'] = scores.get('final_score', 0)
+                updated_rows += 1
+
+            self._save_dataframe(df)
+            return updated_rows
+        except Exception as exc:
+            print(f"Error refreshing candidate scores: {exc}")
+            return 0
+
     def get_statistics(self) -> Dict:
         try:
             df = self._load_dataframe()
@@ -356,9 +468,13 @@ class ExcelManager:
                 'Meet >=80%': int((df['Final Score (%)'] >= 80).sum()) if 'Final Score (%)' in df.columns else 0
             }
 
+            # Explicit count of all rows (no filtering by score)
+            total_count = int(len(df))
+            avg_score = float(round(df['Final Score (%)'].mean(), 2)) if 'Final Score (%)' in df.columns else 0
+
             stats = {
-                'total_applicants': int(len(df)),
-                'average_score': float(round(df['Final Score (%)'].mean(), 2)) if 'Final Score (%)' in df.columns else 0,
+                'total_applicants': total_count,  # Count ALL rows regardless of score
+                'average_score': avg_score,
                 'gender_distribution': _plain_counts(df['Gender']) if 'Gender' in df.columns else {},
                 'location_distribution': _plain_counts(df['Country']) if 'Country' in df.columns else {},
                 'city_distribution': _plain_counts(df['City']) if 'City' in df.columns else {},
@@ -399,6 +515,12 @@ class ExcelManager:
                 df = df[pd.to_numeric(df['Years of Experience'], errors='coerce').fillna(0) >= float(filters['min_experience'])]
             if 'applied_job_id' in filters:
                 df = df[df['Applied Job ID'].fillna('').astype(str) == str(filters['applied_job_id'])]
+            if 'has_driver_license' in filters:
+                license_value = str(filters['has_driver_license']).lower()
+                if license_value in ['true', '1', 'yes']:
+                    df = df[pd.to_numeric(df['Has Driver\'s License'], errors='coerce').fillna(0).astype(int) == 1]
+                elif license_value in ['false', '0', 'no']:
+                    df = df[pd.to_numeric(df['Has Driver\'s License'], errors='coerce').fillna(0).astype(int) == 0]
             if 'skill' in filters:
                 skill_value = str(filters['skill']).strip().lower()
                 matching_skill_cols = [col for col in self.skill_columns if col.lower() == skill_value]
@@ -413,6 +535,7 @@ class ExcelManager:
                     df['First Name'].fillna('').str.contains(query, case=False, na=False)
                     | df['Last Name'].fillna('').str.contains(query, case=False, na=False)
                     | df['Email'].fillna('').str.contains(query, case=False, na=False)
+                    | df['Candidate Key'].fillna('').str.contains(query, case=False, na=False)
                 ]
 
             df['Final Score (%)'] = pd.to_numeric(df['Final Score (%)'], errors='coerce').fillna(0)
@@ -437,9 +560,8 @@ class ExcelManager:
 
     def delete_candidate(self, email: str) -> bool:
         try:
-            normalized_email = str(email).strip().lower()
             df = self._load_dataframe()
-            df = df[df['Email'].fillna('').str.lower() != normalized_email]
+            df = df[~self._match_identifier_mask(df, email)]
             self._save_dataframe(df)
             return True
         except Exception as e:
@@ -448,9 +570,8 @@ class ExcelManager:
 
     def get_candidate_by_email(self, email: str) -> Dict:
         try:
-            normalized_email = str(email).strip().lower()
             df = self._load_dataframe()
-            result = df[df['Email'].fillna('').str.lower() == normalized_email]
+            result = df[self._match_identifier_mask(df, email)]
             if not result.empty:
                 row = self._json_safe_records(result.head(1))
                 return row[0] if row else {}

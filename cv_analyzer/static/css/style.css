@@ -513,6 +513,17 @@ tbody tr:hover {
     font: inherit;
 }
 
+/* Ensure native select dropdowns and their options have good contrast */
+.filter-group select,
+.filter-group select option {
+    color: var(--ink-900);
+    background: rgba(255, 255, 255, 0.96);
+}
+
+.filter-group select::-ms-expand {
+    display: inline-block;
+}
+
 .filter-group textarea {
     min-height: 120px;
     resize: vertical;
@@ -565,6 +576,43 @@ tbody tr:hover {
     padding: 6px 10px;
 }
 
+.btn-small {
+    padding: 8px 12px;
+    font-size: 13px;
+    line-height: 1.1;
+}
+
+#activeJobTopCandidates .candidate-item {
+    background: linear-gradient(180deg, rgba(255,255,255,0.58), rgba(235,242,255,0.72));
+    border: 1px solid rgba(48, 88, 166, 0.12);
+    box-shadow: 0 10px 22px rgba(34, 72, 154, 0.08);
+    padding: 12px;
+    border-radius: 12px;
+    margin-bottom: 12px;
+}
+
+#activeJobTopCandidates .candidate-name {
+    color: var(--ink-900);
+}
+
+#activeJobTopCandidates .candidate-email {
+    color: var(--ink-700);
+}
+
+#activeJobTopCandidates .job-pill {
+    background: rgba(48, 88, 166, 0.08);
+    color: var(--primary-dark);
+    border-color: rgba(48, 88, 166, 0.12);
+}
+
+#activeJobTopCandidates .btn-primary.btn-small,
+#activeJobRankingTable .btn-primary.btn-small {
+    color: #f8fbff;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: linear-gradient(130deg, #22489A 0%, #3BA7D6 100%);
+    box-shadow: 0 8px 18px rgba(34, 72, 154, 0.18);
+}
+
 .btn-primary:hover,
 .btn-secondary:hover,
 .btn-danger:hover {
@@ -585,6 +633,56 @@ tbody tr:hover {
     display: flex;
     align-items: center;
     justify-content: center;
+}
+
+#candidateModal .modal-content {
+    background: linear-gradient(180deg, #0f254a 0%, #153a6a 100%);
+    color: #f8fbff;
+    border-radius: 12px;
+    padding: 20px;
+    max-width: 880px;
+    width: 95%;
+    box-shadow: 0 20px 50px rgba(20, 49, 90, 0.45);
+}
+
+#candidateModal .modal-content h3 {
+    color: #ffffff;
+}
+
+#candidateModal .detail-section h4 {
+    color: rgba(255, 255, 255, 0.92);
+}
+
+#candidateModal .detail-item {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px dashed rgba(255, 255, 255, 0.04);
+}
+
+#candidateModal .detail-label {
+    color: rgba(255, 255, 255, 0.78);
+    font-weight: 700;
+}
+
+#candidateModal .detail-value {
+    color: #e6f0ff;
+}
+
+#candidateModal .close {
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 22px;
+}
+
+#candidateModal .btn-primary {
+    background: linear-gradient(130deg, #22489a 0%, #3ba7d6 100%);
+    color: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+#candidateModal .detail-section {
+    margin-bottom: 12px;
 }
 
 .modal-content {
