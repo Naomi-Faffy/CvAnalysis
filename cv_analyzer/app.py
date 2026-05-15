@@ -3,6 +3,7 @@ from flask_cors import CORS
 import os
 import re
 import shutil
+import json
 from io import BytesIO
 from werkzeug.utils import secure_filename
 from cv_parser import CVParser
@@ -882,6 +883,92 @@ def debug_candidate_count():
 def request_entity_too_large(error):
     return jsonify({'error': 'Upload too large. Maximum batch size is 300MB (supports ~20 CVs per upload)'}), 413
 
+@app.route('/admin')
+def admin_page():
+    """Serve the admin skills management page"""
+    # Render via Jinja so `url_for` works inside the template
+    try:
+        return render_template('admin.html')
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/admin/master-skills', methods=['GET'])
+def get_master_skills():
+    """Get current master skills list"""
+    try:
+        skills_path = os.path.join(DATA_FOLDER, 'master_skills.json')
+        if os.path.exists(skills_path):
+            with open(skills_path, 'r', encoding='utf-8') as f:
+                skills = json.load(f)
+        else:
+            # Fallback to parser's default
+            skills = cv_parser.common_skills + getattr(cv_parser, 'master_skills', [])
+        
+        return jsonify({
+            'success': True,
+            'skills': sorted(list(set(skills)))  # Remove duplicates and sort
+        }), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/admin/master-skills', methods=['POST'])
+def save_master_skills():
+    """Save updated master skills list"""
+    try:
+        data = request.get_json()
+        skills = data.get('skills', [])
+        
+        if not isinstance(skills, list) or not skills:
+            return jsonify({'success': False, 'error': 'Skills must be a non-empty list'}), 400
+        
+        # Validate each skill
+        skills = [s.strip() for s in skills if isinstance(s, str) and s.strip()]
+        skills = sorted(list(set(skills)))  # Remove duplicates and sort
+        
+        # Save to file
+        skills_path = os.path.join(DATA_FOLDER, 'master_skills.json')
+        with open(skills_path, 'w', encoding='utf-8') as f:
+            json.dump(skills, f, indent=2, ensure_ascii=False)
+        
+        # Reload parser with new skills
+        cv_parser.master_skills = skills
+        
+        return jsonify({
+            'success': True,
+            'message': f'Saved {len(skills)} skills',
+            'skills': skills
+        }), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/admin/master-skills/reset', methods=['POST'])
+def reset_master_skills():
+    """Reset to default master skills"""
+    try:
+        # Create default skills file
+        default_skills = [
+            'Python','Java','C','C++','C#','Go','Rust','Ruby','Perl','PHP','Swift','Kotlin','Objective-C',
+            'JavaScript','TypeScript','Node.js','React','Angular','Vue','HTML','CSS',
+            'SQL','PostgreSQL','MySQL','MongoDB','Redis',
+            'AWS','Azure','GCP','Docker','Kubernetes',
+            'DevOps','Linux','Git','Jenkins','GitHub Actions',
+            'Machine Learning','Data Science','TensorFlow','PyTorch',
+            'Agile','Scrum','Project Management'
+        ]
+        
+        skills_path = os.path.join(DATA_FOLDER, 'master_skills.json')
+        with open(skills_path, 'w', encoding='utf-8') as f:
+            json.dump(sorted(default_skills), f, indent=2, ensure_ascii=False)
+        
+        cv_parser.master_skills = sorted(default_skills)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Reset to default skills',
+            'skills': sorted(default_skills)
+        }), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=False, host='0.0.0.0', port=5000)

@@ -32,15 +32,19 @@ function initNavigation() {
     const tabs = document.querySelectorAll('.tab-content');
 
     links.forEach((link) => {
+        const tabName = link.getAttribute('data-tab');
+        // If this link doesn't have a data-tab attribute, allow normal navigation (e.g., /admin external page)
+        if (!tabName) return;
+
         link.addEventListener('click', (event) => {
             event.preventDefault();
-            const tabName = link.getAttribute('data-tab');
 
             links.forEach((item) => item.classList.remove('active'));
             tabs.forEach((tab) => tab.classList.remove('active'));
 
             link.classList.add('active');
-            document.getElementById(tabName).classList.add('active');
+            const tabEl = document.getElementById(tabName);
+            if (tabEl) tabEl.classList.add('active');
             document.getElementById('page-title').textContent = toTitleCase(tabName);
 
             if (tabName === 'active-job') {

@@ -1,6 +1,13 @@
 import re
 from typing import Dict, List, Optional
 
+try:
+    from sentence_transformers import SentenceTransformer
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
+except Exception:
+    SentenceTransformer = None
+    SENTENCE_TRANSFORMERS_AVAILABLE = False
+
 
 class ScoringSystem:
     """Implements an extended scoring engine matching the 8-dimension framework.
@@ -63,6 +70,13 @@ class ScoringSystem:
             'react': {'reactjs'},
             'node.js': {'node'},
         }
+        self.semantic_model = None
+        if SENTENCE_TRANSFORMERS_AVAILABLE:
+            try:
+                self.semantic_model = SentenceTransformer('all-MiniLM-L6-v2')
+            except Exception as exc:
+                print(f"Warning: sentence-transformers model not loaded. Install or download model for semantic matching: {exc}")
+                self.semantic_model = None
 
     def _safe_num(self, v) -> float:
         try:
@@ -105,6 +119,26 @@ class ScoringSystem:
             for s in syns:
                 out.add(self._normalize(s))
         return out
+
+    def _semantic_similarity(self, left_text: str, right_text: str) -> float:
+        if not self.semantic_model:
+            return 0.0
+
+        left_text = (left_text or '').strip()
+        right_text = (right_text or '').strip()
+        if not left_text or not right_text:
+            return 0.0
+
+        try:
+            embeddings = self.semantic_model.encode([left_text, right_text], normalize_embeddings=True)
+            if len(embeddings) < 2:
+                return 0.0
+            left_vec, right_vec = embeddings[0], embeddings[1]
+            similarity = float(sum(a * b for a, b in zip(left_vec, right_vec)))
+            return max(0.0, min(1.0, similarity))
+        except Exception as exc:
+            print(f"Warning: semantic similarity check failed: {exc}")
+            return 0.0
 
     def experience_quality(self, candidate: Dict) -> float:
         years = int(self._safe_num(candidate.get('experience', {}).get('years', 0)))
@@ -323,6 +357,9 @@ class ScoringSystem:
         cand_terms = set(re.findall(r"\b[a-zA-Z][a-zA-Z0-9+.#/-]{2,}\b", str(candidate.get('raw_text','')).lower()))
         keyword_score = (len(jd_terms & cand_terms) / max(len(jd_terms),1)) * 100 if jd_terms else 0
 
+        semantic_similarity = self._semantic_similarity(jd_text, str(candidate.get('raw_text', '')))
+        semantic_score = round(semantic_similarity * 100, 2)
+
         # Weighted dimension score (use weighted_cv_quality)
         weighted, dims = self.weighted_cv_quality(candidate, job_type)
 
@@ -372,12 +409,13 @@ class ScoringSystem:
 
         gap_penalty = min(60, gap_penalty)
 
-        job_fit = (keyword_score * 0.30) + (weighted * 0.50) - (gap_penalty * 0.25)
+        job_fit = (keyword_score * 0.24) + (semantic_score * 0.26) + (weighted * 0.50) - (gap_penalty * 0.25)
         job_fit = max(0.0, min(100.0, job_fit))
 
         return {
             'job_fit_score': round(job_fit,2),
             'keyword_match_score': round(keyword_score,2),
+            'semantic_match_score': round(semantic_score,2),
             'weighted_dimension_score': round(weighted,2),
             'gap_penalty': gap_penalty,
             'gaps': gaps,

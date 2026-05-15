@@ -6,6 +6,12 @@ import pdfplumber
 from docx import Document
 
 try:
+    from pyresparser import ResumeParser
+    PYRES_PARSER_AVAILABLE = True
+except Exception:
+    PYRES_PARSER_AVAILABLE = False
+
+try:
     import spacy
     SPACY_AVAILABLE = True
 except ImportError:
@@ -23,6 +29,8 @@ class CVParser:
         else:
             print("Warning: spacy not installed. Install with: pip install spacy")
             self.nlp = None
+        # PyResparser availability
+        self.pyresparser_available = PYRES_PARSER_AVAILABLE
         
         self.common_skills = [
             'Python', 'Java', 'JavaScript', 'C++', 'C#', 'SQL', 'HTML', 'CSS', 'React', 'Angular',
@@ -36,17 +44,42 @@ class CVParser:
             'PLC', 'Instrumentation', 'Networking', 'Router', 'Switch', 'TCP/IP', 'IoT',
             'RF', 'Signal Processing', 'Electrical Engineering', 'Mechatronics', 'AutoCAD', 'SolidWorks'
         ]
+        # Load master skills from data/master_skills.json if available for easier maintenance
+        try:
+            import json, os
+            skills_path = os.path.join(os.path.dirname(__file__), 'data', 'master_skills.json')
+            with open(skills_path, 'r', encoding='utf-8') as f:
+                self.master_skills = json.load(f)
+        except Exception:
+            # Fallback inline subset if file missing
+            self.master_skills = ['Python', 'JavaScript', 'Java', 'C#', 'C++', 'SQL', 'AWS', 'Azure', 'Docker', 'Kubernetes']
         self.skill_aliases = {
             'js': 'JavaScript',
             'javascript': 'JavaScript',
             'py': 'Python',
+            'python': 'Python',
             'node': 'Node.js',
             'nodejs': 'Node.js',
+            'express': 'Node.js',
             'postgres': 'PostgreSQL',
+            'postgresql': 'PostgreSQL',
+            'psql': 'PostgreSQL',
             'ml': 'Machine Learning',
+            'machinelearning': 'Machine Learning',
             'ai': 'Machine Learning',
             'powerbi': 'Power BI',
-            'gitlab': 'Gitlab'
+            'power-bi': 'Power BI',
+            'gitlab': 'Gitlab',
+            'github': 'GitHub',
+            'githubactions': 'GitHub Actions',
+            'aws': 'AWS',
+            'amazon': 'AWS',
+            'amazonwebservices': 'AWS',
+            'gcp': 'GCP',
+            'googlecloud': 'GCP',
+            'azure': 'Azure',
+            'k8s': 'Kubernetes',
+            'docker': 'Docker'
         }
         self.countries = [
             'USA', 'United States', 'UK', 'United Kingdom', 'Canada', 'India', 'Australia',
@@ -618,19 +651,31 @@ class CVParser:
         return skill
 
     def extract_skills(self, text: str) -> List[str]:
-        """Extract skills from CV"""
+        """Extract skills from CV using master skills and optional extra skills list"""
+        return self._extract_skills_with_master(text, extra_skills=None)
+
+    def _extract_skills_with_master(self, text: str, extra_skills: List[str] = None) -> List[str]:
         found_skills = set()
         text_lower = text.lower()
-        
-        for skill in self.common_skills:
-            if skill.lower() in text_lower:
+
+        # Check master skills first (broad coverage)
+        for skill in getattr(self, 'master_skills', []) + self.common_skills:
+            if skill and isinstance(skill, str) and skill.lower() in text_lower:
                 found_skills.add(self._normalize_skill(skill))
 
+        # Token-based fallback matching
         raw_tokens = re.findall(r'\b[a-zA-Z][a-zA-Z+.#]{1,25}\b', text)
         for token in raw_tokens:
             norm = self._normalize_skill(token)
-            if norm in self.common_skills:
+            # match against both common and master skills
+            if norm in [self._normalize_skill(s) for s in (getattr(self, 'master_skills', []) + self.common_skills)]:
                 found_skills.add(norm)
+
+        # Merge any extra skills provided (e.g., from pyresparser)
+        if extra_skills:
+            for s in extra_skills:
+                if s and isinstance(s, str):
+                    found_skills.add(self._normalize_skill(s))
 
         return sorted(found_skills)
     def extract_driver_license(self, text: str) -> bool:
@@ -650,6 +695,22 @@ class CVParser:
                 return True
         
         return False
+    
+    def parse_with_pyresparser(self, file_path: str) -> List[str]:
+        """Use pyresparser to extract fields if available. Returns a list of skills or empty list."""
+        if not getattr(self, 'pyresparser_available', False):
+            return []
+
+        try:
+            data = ResumeParser(file_path).get_extracted_data()
+            skills = data.get('skills') or data.get('skill') or []
+            if isinstance(skills, str):
+                # comma separated
+                skills = [s.strip() for s in skills.split(',') if s.strip()]
+            return skills or []
+        except Exception as e:
+            print(f"pyresparser extraction failed: {e}")
+            return []
     def extract_age_or_dob(self, text: str) -> str:
         """Extract age or date of birth"""
         date_patterns = [
@@ -731,7 +792,15 @@ class CVParser:
         education = education_items or self.extract_education(text)
         education_level = self.infer_education_level(education)
         experience = self.extract_experience(text)
-        skills = self.extract_skills(text)
+        # Optionally use pyresparser for fast resume parsing and skill extraction
+        parser_skills = []
+        try:
+            if getattr(self, 'pyresparser_available', False):
+                parser_skills = self.parse_with_pyresparser(file_path)
+        except Exception as e:
+            print(f"Error running pyresparser: {e}")
+
+        skills = self._extract_skills_with_master(text, extra_skills=parser_skills)
         has_driver_license = self.extract_driver_license(text)
 
         confidence = {
